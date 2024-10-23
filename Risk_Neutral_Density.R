@@ -354,10 +354,6 @@ ggplot(left_join(quantiles_2, mean_r), aes(x = term)) +
   scale_y_continuous(labels = scales::percent) +
   theme(legend.position= "bottom", legend.title=element_blank(), plot.margin = margin(1.2,.5,1.2,.5, "cm"))
 
-# quantiles_2 <- bind_cols(rep(c(0, charac$terms), each = unique(lengths(quantiles))),
-#                          c(rep(eur_spot, unique(lengths(quantiles))), unlist(quantiles)),
-#                          rep(paste0("q", nb_q*thres), 1 + length(quantiles))) %>% rename_with( ~c("term", "rate", "quantile"))
-
 
 #graph of quantiles through time unshaded #2
 quantiles_3 <- bind_cols(rep(c(0, charac$terms), c(unique(lengths(quantiles)), lengths(quantiles)) ),
