@@ -31,7 +31,7 @@ rates_n <- approx(rates$term, rates$Yield, xout=charac$terms, method = "linear",
 
 ###############################  CALIBRATION OF PARAMETERS  ##########################################
 
-nb_log <- 3    #choose number of lognormal laws in the mixture: 2 or 3
+nb_log <- 2    #choose number of lognormal laws in the mixture: 2 or 3
 
 #European call & put prices, expected spot price as a function of transformed parameters a and b
 #for a sum of 2 or 3 lognormals in B&S model
@@ -68,10 +68,7 @@ MSE_mix <- function(x){
   w_put <- B*first(tail(x, 2)) + (1 - B)*last(x)
   CALL <- w_call*C_INF + (1 - w_call)*C_SUP
   PUT <- w_put*P_INF + (1 - w_put)*P_SUP
-  RES_C <- sum((C - CALL)^2, na.rm = T)
-  RES_P <- sum((P - PUT)^2, na.rm = T)
-  RES_F <- (FWD - esp_mix(x))^2
-  MSE_mix <- RES_C + RES_P + RES_F
+  MSE_mix <- sum((C - CALL)^2, na.rm = T) + sum((P - PUT)^2, na.rm = T) + (FWD - esp_mix(x))^2
   return(MSE_mix)
 }
 
@@ -132,10 +129,10 @@ for (m in 1:length(charac$terms)){
     sol <- nlminb(start = start, objective = objective, lower = lower, upper = upper, 
                   control = list(iter.max = 500))
     PARA[i, grep(paste(c("m", "s"), collapse = "|"), colnames(PARA))] <- sol$par
-    PARA[i, ncol(PARA)] <- sol$objective
+    PARA[i, "SCE"] <- sol$objective
    }
 
-  param <- PARA[which.min(PARA[, ncol(PARA)]), -ncol(PARA)]
+  param <- PARA[which.min(PARA[, "SCE"]), -ncol(PARA)]
   param[param==0] <- 1e-6
 
   #2nd optimization over 8 parameters
@@ -303,7 +300,6 @@ ggplot() + geom_point(data = ncdf_p, aes(x = price, y = CDF, group = maturity, c
   theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
   guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
 
-
 par(mar = c(8,6,4,4) + 0.1, xpd = T, cex.axis = cex)
 plot(NA, pch = 20, xlab = "", ylab = "cumulative probability", las = 1, xlim = xlim_r, ylim = 0:1, 
      main = paste("RNDs from a mixture of", nb_log, "lognormals"))
@@ -326,10 +322,7 @@ charac <- charac %>% select(-c(mat, fut_contract)) %>% mutate(fut_rate = 100 - f
   bind_cols(t(100*(1-sapply(range_px, rev)/rev(x_axis))), nb_opt = unlist(nb_opt), 100*E_y, 100*SD_y, SK_y, KU_y) %>%
   rename_at(c(5,6,8:11), ~c("min_strike (%)", "max_strike (%)", "mean (%)", "stddev (%)", "skewness", "kurtosis"))
 
-#a few quantiles
-nb_q <- 100
-thres <- c(1, 5, 25, 50, 75, 95, 99)/nb_q
-
+#quantiles of order 0.1%
 nb_q <- 1000
 thres <- seq(nb_q)/nb_q
 quantiles <- list()
@@ -379,7 +372,6 @@ ggplot(left_join(quantiles_2, mean_r), aes(x = term)) +
   scale_color_manual(values = c("median" = "deepskyblue", "mean" = "coral1")) +
   scale_y_continuous(labels = scales::percent) +
   theme(legend.position= "bottom", legend.title=element_blank(), plot.margin = margin(1.2,.5,1.2,.5, "cm"))
-
 
 #graph of quantiles through time unshaded #2
 quantiles_3 <- bind_cols(rep(c(0, charac$terms), c(unique(lengths(quantiles)), lengths(quantiles)) ),
