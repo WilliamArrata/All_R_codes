@@ -1,5 +1,5 @@
 require("pacman")
-pacman::p_load("stringr","Hmisc","stats","readxl","data.table","dplyr","tidyr","zoo", "janitor", "ggplot2")
+pacman::p_load("stringr", "Hmisc", "stats", "readxl", "data.table", "zoo", "dplyr", "tidyr", "janitor", "ggplot2")
 
 ##########################################   DOWNLOAD DATA    ##########################################
 
@@ -32,10 +32,11 @@ rates_n <- approx(rates$term, rates$Yield, xout=charac$terms, method = "linear",
 
 ###############################  CALIBRATION OF PARAMETERS  ##########################################
 
+
+nb_log <- 2    #choose number of lognormal laws in the mixture: 2 or 3
+
 #European call & put prices, expected spot price as a function of transformed parameters a and b
 #for a sum of 2 or 3 lognormals in B&S model
-
-nb_log <- 3    #choose number of lognormal laws in the mixture: 2 or 3
 
 call <- function(x, KC){                          #call price in the B&S model
   d1_C <- (x[1] + x[2]^2 - log(KC))/x[2]
@@ -69,10 +70,7 @@ MSE_mix <- function(x){
   w_put <- B*first(tail(x, 2)) + (1 - B)*last(x)
   CALL <- w_call*C_INF + (1 - w_call)*C_SUP
   PUT <- w_put*P_INF + (1 - w_put)*P_SUP
-  RES_C <- sum((C - CALL)^2, na.rm = T)
-  RES_P <- sum((P - PUT)^2, na.rm = T)
-  RES_F <- (FWD - esp_mix(x))^2
-  MSE_mix <- RES_C + RES_P + RES_F
+  MSE_mix <- sum((C - CALL)^2, na.rm = T) + sum((P - PUT)^2, na.rm = T) + (FWD - esp_mix(x))^2
   return(MSE_mix)
 }
 
@@ -133,10 +131,10 @@ for (m in 1:length(charac$terms)){
     sol <- nlminb(start = start, objective = objective, lower = lower, upper = upper, 
                   control = list(iter.max = 500))
     PARA[i, grep(paste(c("m", "s"), collapse = "|"), colnames(PARA))] <- sol$par
-    PARA[i, ncol(PARA)] <- sol$objective
+    PARA[i, "SCE"] <- sol$objective
   }
   
-  param <- PARA[which.min(PARA[, ncol(PARA)]), -ncol(PARA)]
+  param <- PARA[which.min(PARA[, "SCE"]), -ncol(PARA)]
   param[param==0] <- 1e-6
   
   #2nd optimization over 8 parameters
@@ -195,13 +193,12 @@ series <- mapply(cbind, PX, DNR)
 nb_log[unique(lengths(params))!=5] <- 3
 
 cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, xpd = T, cex.axis = cex)
-plot(NA, pch = 20, xlab = "", ylab = "density", main = paste("RNDs from a mixture of", nb_log, "lognormals"), 
-     xlim = xlim, ylim = ylim, las = 1)
+par(mar = c(8, 4, 4, 4) + 0.1, xpd = T, cex.axis = cex)
+plot(NA, pch = 20, xlab = "", ylab = "density", xlim = xlim, ylim = ylim, las = 1,
+     main = paste("RNDs from a mixture of",nb_log,"lognormals"))
 mapply(lines, series, col = co)
-title(sub = "OAT future price (% of par)", adj = 1, line = 2)
-legend("bottom", inset = c(-0.05, -0.4), legend = format(as.yearmon(charac$option_matu), "%b %y"),
-       horiz = T, col = co, lty = 1, bty = "n")
+title(sub = "3 mth Euribor future price (EUR)", adj = 1, line = 2)
+legend("bottom", inset = c(-0.05,-0.4), legend = charac$option_matu, ncol = 6, col = co, lty = 1, bty = "n")
 
 #Graph of risk neutral densities of prices with ggplot2
 series <- lapply(mapply(cbind, series, as.character(charac$option_matu)), data.frame)
@@ -312,6 +309,16 @@ plot(NA, pch = 20, xlab = "", ylab = "cumulative probability", xlim = xlim, ylim
 mapply(lines, series_CDF, col = co)
 title(sub = "OAT future price (% of par)", adj = 1, line = 2)
 legend("bottom", inset = c(-0.05,-0.35), legend = charac$option_matu, horiz = T,col = co, lty = 1, bty = "n")
+
+ncdf_p <- do.call(rbind, mapply(cbind, series_CDF, charac$option_matu)) %>% data.frame %>% 
+  rename_with(~c("price", "CDF", "maturity")) %>% mutate_at("maturity", as.Date)
+
+ggplot() + geom_point(data = ncdf_p, aes(x = price, y = CDF, group = maturity, color = maturity), size = 0.5) +
+  labs(title = "10Y-OAT future contract (% of par)", subtitle = "Cumulative Density Function") +
+  labs(y = "cumulative density", x = "futures contract price") + 
+  scale_x_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 7)) +
+  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
 
 par(mar = c(7, 6, 4, 4) + 0.1, xpd = T, cex.axis = cex)
 plot(NA, pch = 20, xlab = "", ylab = "cumulative probability", xlim = xlim_r, ylim = 0:1, las = 1,
