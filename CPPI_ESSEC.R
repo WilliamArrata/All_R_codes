@@ -1,5 +1,6 @@
 require("pacman")
 pacman::p_load("readxl", "data.table", "dplyr", "tidyr", "ggplot2", "janitor", "stringr")
+setwd("Z://1_Service/1.2_Agents_Service/William/mes codes/portfolio management ESSEC")
 
 ##############################  WILLIAM ARRATA - CPPI - ESSEC WINTER 2023  ####################################
 
@@ -9,38 +10,68 @@ risky <- read_excel("SXXE.xlsx") %>% rename_with(~c("Date", "price")) %>%   #Loa
 #I define the parameters
 F <- 90                                                                #Floor at inception
 m <- 4                                                                 #Multiplier
-chg <- which(risky$Date == "2019-12-31")                               #Date when riskfree rates changes
 F1 <- 1.2                                                              #Additional Floors if cliquet
 F2 <- 1.1
+r <- 0.01                                                              #choose value for the riskfree rate
 
 ####################################  BACKTESTING WITH HISTORICAL DATA  #######################################
 
-#DAILY REBALANCING, MAXIMUM EXPOSURE, NO CLIQUET 
+#MAXIMUM EXPOSURE, NO CLIQUET, VARYING THE REBALANCING FREQUENCY
+
+freq <- c(1, 20, 60)   #working days between two rebalancings
+rebal <- list("_d", "_m", "_q")
 
 #Initialization
-backt <- data.frame(Date = risky$Date, r = rep( c(2.75,2.25)/100, c(chg, nrow(risky) - chg)), Vpf = 100, 
-                    Px = risky$price, brebal = NA, rf = rep(c(2.75, 2.25)/100, c(chg, nrow(risky) - chg))) %>%
-  mutate(Floor = F*cumprod(ifelse(row_number()!=1, 1 + shift(r)*as.numeric(Date - shift(Date))/365, 1)) ) %>% 
+backt <- data.frame(Date = risky$Date, r = r, Vpf = 100, Px = risky$price, brebal = NA ) %>%
+  mutate(Floor = F*cumprod(ifelse(row_number()!=1, 1 + r*as.numeric(Date - shift(Date))/365, 1)) ) %>% 
   mutate(Cushion = Vpf - Floor, Vrisky = m*Cushion, Vrf = Vpf - Vrisky, nsh = Vrisky/Px)
+all_back <- list()
 
 #Iteration
-for (i in 2:nrow(backt)){
-  #values of risky asset and cushion before rebalancing
-  backt$brebal[i] <- backt$Px[i]*backt$nsh[i-1]
-  backt$Cushion[i] <- (backt$Vrf*(1 + backt$rf*diff(backt$Date)/365))[i-1] + (backt$brebal - backt$Floor)[i]
-  #rebalancing actions
-  backt$Vrisky[i] <- ifelse(backt$Cushion[i] > backt$Floor[i]/(m-1), backt$brebal[i],
-                            ifelse(backt$Cushion[i] > 0, m*backt$Cushion[i], backt$Vrisky[i]))     
-  backt$nsh[i] <- ifelse(backt$Cushion[i] > backt$Floor[i]/(m-1), backt$nsh[i-1],
-                       ifelse(backt$Cushion[i] > 0, (backt$Vrisky/backt$Px)[i], 0))
-  backt$Vrf[i] <- (backt$Vrf*(1 + backt$rf*diff(backt$Date)/365) )[i-1] + 
-    ifelse(backt$Cushion[i] > backt$Floor[i]/(m-1), 0,
-           ifelse(backt$Cushion[i] > 0, (backt$brebal - backt$Vrisky)[i], backt$Px[i]*backt$nsh[i-1]))
-  backt$Vpf[i] <- ifelse(backt$Cushion[i] > 0, (backt$Vrisky + backt$Vrf)[i],
-                         (backt$Vrf*(1 + backt$rf*diff(backt$Date)/365))[i-1] + backt$Px[i]*backt$nsh[i-1])
+for (j in 1:length(freq) ){
+  backt_2 <- backt %>% filter(row_number() %in% seq(1, nrow(risky), freq[j]) )
+  
+  for (i in 2:nrow(backt_2)){
+    #values of risky asset and cushion before rebalancing
+    backt_2$brebal[i] <- backt_2$Px[i]*backt_2$nsh[i-1]
+    backt_2$Cushion[i] <- (backt_2$Vrf*(1 + backt_2$r*diff(backt_2$Date)/365))[i-1] + (backt_2$brebal - backt_2$Floor)[i]
+    #rebalancing actions
+    backt_2$Vrisky[i] <- ifelse(backt_2$Cushion[i] > backt_2$Floor[i]/(m-1), backt_2$brebal[i],
+                            ifelse(backt_2$Cushion[i] > 0, m*backt_2$Cushion[i], backt_2$Vrisky[i]))     
+    backt_2$nsh[i] <- ifelse(backt_2$Cushion[i] > backt_2$Floor[i]/(m-1), backt_2$nsh[i-1],
+                       ifelse(backt_2$Cushion[i] > 0, (backt_2$Vrisky/backt_2$Px)[i], 0))
+    backt_2$Vrf[i] <- (backt_2$Vrf*(1 + backt_2$r*diff(backt_2$Date)/365) )[i-1] + 
+      ifelse(backt_2$Cushion[i] > backt_2$Floor[i]/(m-1), 0,
+           ifelse(backt_2$Cushion[i] > 0, (backt_2$brebal - backt_2$Vrisky)[i], backt_2$Px[i]*backt_2$nsh[i-1]))
+    backt_2$Vpf[i] <- ifelse(backt_2$Cushion[i] > 0, (backt_2$Vrisky + backt_2$Vrf)[i],
+                         (backt_2$Vrf*(1 + backt_2$r*diff(backt_2$Date)/365))[i-1] + backt_2$Px[i]*backt_2$nsh[i-1])
+    }
+  all_back[[j]] <- backt_2 %>% select( c(Date, Vpf, Vrisky, Vrf, nsh, Cushion)) %>% mutate(rebal = Date) %>% 
+    rename_at(-1, ~paste0(., as.character(rebal[[j]])))
 }
 
-ggplot() + geom_line(data = backt, aes(x = Date, y = Vpf)) +  labs(x = "year", y = 'risky value') #graph
+#merge then recompute daily values for the portfolio if rebalancing not daily
+all_back <- Reduce(function(x,y) merge(x = x, y = y, by = "Date", all = T), all_back) %>%
+  fill(c("nsh_m", "nsh_q", "Vrf_m", "Vrf_q", "rebal_m", "rebal_q"), .direction = "down") %>% 
+  bind_cols(backt %>% select(c(r, Px, Floor))) %>% 
+  group_by(rebal_q) %>% mutate(Vrf_q = Vrf_q*Floor/first(Floor)) %>% ungroup() %>%
+  group_by(rebal_m) %>% mutate(Vrf_m = Vrf_m*Floor/first(Floor)) %>% ungroup() %>% 
+  mutate(Vrisky_m = ifelse(is.na(Vpf_m), nsh_m*Px, Vrisky_m),
+         Vrisky_q = ifelse(is.na(Vpf_q), nsh_q*Px, Vrisky_q), 
+         Vpf_m = ifelse( is.na(Vpf_m), Vrisky_m + Vrf_m, Vpf_m),
+         Vpf_q = ifelse( is.na(Vpf_q), Vrisky_q + Vrf_q, Vpf_q)) %>% 
+  select(c(Date, Vpf_d, Vpf_m, Vpf_q, Floor, rebal_m, rebal_q)) %>%
+  mutate(rebal_m = ifelse( Date == rebal_m, "Y", ""), rebal_q = ifelse( Date == rebal_q, "Y", ""))
+
+
+ggplot(all_back) + geom_line( aes(x = Date, y = Vpf_d, color="daily")) + 
+  geom_line(aes(x = Date, y = Vpf_m, color="monthly")) + 
+  geom_line(aes(x = Date, y = Vpf_q, color = "quarterly")) + 
+  geom_line(aes(x = Date, y = Floor)) + 
+  labs(x = "year", y = 'risky value') + #graph
+  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) + 
+  guides(color = guide_legend(title = "rebalancing frequency", title.position = "top", title.hjust = 0.5)) +
+  geom_vline(xintercept = all_back$Date[all_back$rebal_q=="Y"], linetype="dotted")
 
 
 ################       SIMULATIONS OF CPPI VALUES WITH THE GIVEN PARAMETERS      #################
@@ -48,7 +79,9 @@ ggplot() + geom_line(data = backt, aes(x = Date, y = Vpf)) +  labs(x = "year", y
 #Simulation of 1000 paths for the price of the risky asset over 500 days
 R <- 0.01
 t <- 0:500
+#risky %>% mutate_at("price", ~((.) - shift(.))/(.))
 sig <- 0.15
+#sig <- sqrt(252)*sd(diff(risky$price)/risky$price[-last(risky$price)])     #historical volatility used for simu
 nsim <- 1000
 set.seed(123)
 
@@ -173,6 +206,7 @@ ggplot() + geom_line(data = sim_2, aes(x = Date, y = CPPI_value, color = scenari
        subtitle = paste0("multiplier value of ", mul[mult]))+
   guides(color = guide_legend(nrow = 1, title = "scenario", title.position = "top",
                               title.hjust = 0.5))
+
 
 #############################     FINDING OUT THE OPTIMAL MULTIPLIER      ####################################
 
