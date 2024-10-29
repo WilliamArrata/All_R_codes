@@ -1,6 +1,5 @@
 require("pacman")
 pacman::p_load("readxl", "data.table", "dplyr", "tidyr", "ggplot2", "janitor", "stringr")
-setwd("Z://1_Service/1.2_Agents_Service/William/mes codes/portfolio management ESSEC")
 
 ##############################  WILLIAM ARRATA - CPPI - ESSEC WINTER 2023  ####################################
 
@@ -12,20 +11,23 @@ F <- 90                                                                #Floor at
 m <- 4                                                                 #Multiplier
 F1 <- 1.2                                                              #Additional Floors if cliquet
 F2 <- 1.1
-r <- 0.01                                                              #choose value for the riskfree rate
+r <- list(0.01, 0.02, 0.04, 0.07)                                      #range of values for the riskfree rate
+freq <- c(1, 20, 60)                                                   #range of rebalancing frequencies
+rebal <- list("_d", "_m", "_q")                                        #working days between two rebalancings
 
 ####################################  BACKTESTING WITH HISTORICAL DATA  #######################################
 
-#MAXIMUM EXPOSURE, NO CLIQUET, VARYING THE REBALANCING FREQUENCY
+#MAXIMUM EXPOSURE, NO CLIQUET
 
-freq <- c(1, 20, 60)   #working days between two rebalancings
-rebal <- list("_d", "_m", "_q")
+all_back <- list()
 
+for (k in 1: length(r)){
+  
 #Initialization
-backt <- data.frame(Date = risky$Date, r = r, Vpf = 100, Px = risky$price, brebal = NA ) %>%
+backt <- data.frame(Date = risky$Date, r = r[[k]], Vpf = 100, Px = risky$price, brebal = NA ) %>%
   mutate(Floor = F*cumprod(ifelse(row_number()!=1, 1 + r*as.numeric(Date - shift(Date))/365, 1)) ) %>% 
   mutate(Cushion = Vpf - Floor, Vrisky = m*Cushion, Vrf = Vpf - Vrisky, nsh = Vrisky/Px)
-all_back <- list()
+all_back[[k]] <- list()
 
 #Iteration
 for (j in 1:length(freq) ){
@@ -46,12 +48,12 @@ for (j in 1:length(freq) ){
     backt_2$Vpf[i] <- ifelse(backt_2$Cushion[i] > 0, (backt_2$Vrisky + backt_2$Vrf)[i],
                          (backt_2$Vrf*(1 + backt_2$r*diff(backt_2$Date)/365))[i-1] + backt_2$Px[i]*backt_2$nsh[i-1])
     }
-  all_back[[j]] <- backt_2 %>% select( c(Date, Vpf, Vrisky, Vrf, nsh, Cushion)) %>% mutate(rebal = Date) %>% 
+  all_back[[k]][[j]] <- backt_2 %>% select( c(Date, Vpf, Vrisky, Vrf, nsh, Cushion)) %>% mutate(rebal = Date) %>% 
     rename_at(-1, ~paste0(., as.character(rebal[[j]])))
 }
 
 #merge then recompute daily values for the portfolio if rebalancing not daily
-all_back <- Reduce(function(x,y) merge(x = x, y = y, by = "Date", all = T), all_back) %>%
+all_back[[k]] <- Reduce(function(x,y) merge(x = x, y = y, by = "Date", all = T), all_back[[k]]) %>%
   fill(c("nsh_m", "nsh_q", "Vrf_m", "Vrf_q", "rebal_m", "rebal_q"), .direction = "down") %>% 
   bind_cols(backt %>% select(c(r, Px, Floor))) %>% 
   group_by(rebal_q) %>% mutate(Vrf_q = Vrf_q*Floor/first(Floor)) %>% ungroup() %>%
@@ -61,17 +63,26 @@ all_back <- Reduce(function(x,y) merge(x = x, y = y, by = "Date", all = T), all_
          Vpf_m = ifelse( is.na(Vpf_m), Vrisky_m + Vrf_m, Vpf_m),
          Vpf_q = ifelse( is.na(Vpf_q), Vrisky_q + Vrf_q, Vpf_q)) %>% 
   select(c(Date, Vpf_d, Vpf_m, Vpf_q, Floor, rebal_m, rebal_q)) %>%
-  mutate(rebal_m = ifelse( Date == rebal_m, "Y", ""), rebal_q = ifelse( Date == rebal_q, "Y", ""))
+  mutate(rebal_m = ifelse( Date == rebal_m, "Y", ""), rebal_q = ifelse( Date == rebal_q, "Y", "")) %>% 
+  bind_cols(r[[k]]) %>% rename_at(ncol(.), ~c("rf_rate")) 
+}
 
+col <- c("Date", "rebal_m", "rebal_q", 
+         c(mapply(paste0, r, "/", lapply(lapply(all_back, colnames), function(x) x[-c(1, 6, 7)]))))
 
-ggplot(all_back) + geom_line( aes(x = Date, y = Vpf_d, color="daily")) + 
-  geom_line(aes(x = Date, y = Vpf_m, color="monthly")) + 
-  geom_line(aes(x = Date, y = Vpf_q, color = "quarterly")) + 
-  geom_line(aes(x = Date, y = Floor)) + 
-  labs(x = "year", y = 'risky value') + #graph
-  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) + 
-  guides(color = guide_legend(title = "rebalancing frequency", title.position = "top", title.hjust = 0.5)) +
-  geom_vline(xintercept = all_back$Date[all_back$rebal_q=="Y"], linetype="dotted")
+all_back <- Reduce(function(x,y) merge(x = x, y = y, by = c("Date", "rebal_m", "rebal_q"), all = T), all_back) %>% 
+  data.frame %>% rename_all(~col) %>% 
+  pivot_longer(cols = starts_with('0.0'), names_to = "ptf_constituents", values_to = 'value') %>% 
+  mutate_at("ptf_constituents", ~str_squish(gsub(".*\\/", " ", .))) %>%
+  mutate(rf = ifelse( ptf_constituents == "rf_rate", value, NA)) %>% 
+  fill("rf", .direction = "up") %>% filter(ptf_constituents != "rf_rate")
+
+ggplot(data = all_back, aes(x = Date, y = value, color = ptf_constituents)) + 
+  geom_vline(xintercept = all_back$Date[all_back$rebal_q=="Y"], linetype="dotted") +
+  geom_line(stat = "identity") + labs(x = "year", y = "CPPI value") + facet_wrap(~rf) + theme_bw() +
+  theme(legend.position = "bottom", legend.title=element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  guides(color = guide_legend(title = "rebalancing frequency", title.position = "top", title.hjust = 0.5))   
+  guides(color = guide_legend(nrow = 3)) 
 
 
 ################       SIMULATIONS OF CPPI VALUES WITH THE GIVEN PARAMETERS      #################
@@ -79,9 +90,7 @@ ggplot(all_back) + geom_line( aes(x = Date, y = Vpf_d, color="daily")) +
 #Simulation of 1000 paths for the price of the risky asset over 500 days
 R <- 0.01
 t <- 0:500
-#risky %>% mutate_at("price", ~((.) - shift(.))/(.))
 sig <- 0.15
-#sig <- sqrt(252)*sd(diff(risky$price)/risky$price[-last(risky$price)])     #historical volatility used for simu
 nsim <- 1000
 set.seed(123)
 
