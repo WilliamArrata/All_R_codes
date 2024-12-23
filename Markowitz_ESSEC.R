@@ -7,8 +7,8 @@ pacman::p_load("tseries","readxl","dplyr", "tidyr", "data.table", "ggplot2")
 #####################   DATA DOWNLOAD AND COMPUTATION OF EXPECTED RETURNS AND COVARIANCES   ################
 
 #I load the data
-returns <- as.matrix(read_excel("stock_prices.xlsx") %>%  select_if(is.numeric) %>%  mutate_all(~ ( (.) - shift(.))/(.)) %>% 
-                       na.omit() %>% rename_with(~gsub(" Equity","", (.)) ))
+returns <- read_excel("stock_prices.xlsx") %>%  select_if(is.numeric) %>%  mutate_all(~ ( (.) - shift(.))/(.)) %>% 
+  na.omit() %>% rename_with(~word(., 1)) %>% as.matrix
 mean <- 252*matrix(colMeans(returns))                             #annualized expected returns
 sig <- 252*cov(returns)                                           #annualized covariances
 
@@ -21,46 +21,57 @@ sig <- 252*cov(returns)                                           #annualized co
 #unless cov matrix is also provided. however, same weights whether annualized or not
 
 #Global Minimum Variance Portfolio
-gmvp <- portfolio.optim(returns, shorts=T)         #GMVP, if no target is given to the optimizer, only risk minimized
-w_gmvp <- 100*gmvp$pw
-print(c(w_gmvp,252*gmvp$pm,sqrt(252)*gmvp$ps))     #annualized expected return and stddev, weights
+gmvp <- portfolio.optim(returns, shorts = T)         #only risk minimized when no return specified
+w_gmvp <- gmvp$pw
+gmvp_assets <- data.frame(ptf = "GMVP", stock = colnames(returns), weight = w_gmvp)
 
-c_y <- 1.3
-col <- c("darkred","darkblue","darkgrey")
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx <- barplot(w_gmvp, ylab="%", col = col[1], las=1, ylim = c_y*range(w_gmvp), names.arg = colnames(returns))
-text(x = xx, y = w_gmvp, paste(round(w_gmvp), "%", sep = ""), pos = 3, font = 3)
-box()
+print(c(w_gmvp, 252*gmvp$pm, sqrt(252)*gmvp$ps))     #weights, annualized expected return and stddev
+
+ggplot(data = gmvp_assets, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Portfolio with an 20% target expected return
 target_1 <- portfolio.optim(returns, pm = 0.20/252, shorts = T)
-w_1_s <- 100*target_1$pw
+w_1_s <- target_1$pw
+assets_1 <- data.frame(ptf = "20% return", stock = colnames(returns), weight = w_1_s)
 
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx <- barplot(w_1_s, ylab = "%", col = col[2], las = 1, ylim = c_y*range(w_1_s), names.arg = colnames(returns))
-text(x = xx, y = w_1_s, paste(round(w_1_s), "%", sep = ""), pos=3, font = 3)
-box()
+ggplot(data = assets_1, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Portfolio with a 10% target expected return
 target_2 <- portfolio.optim(returns, pm = 0.10/252, shorts = T)
-w_2_s <- 100*target_2$pw
+w_2_s <- target_2$pw
+assets_2 <- data.frame(ptf = "10% return", stock = colnames(returns), weight = w_2_s)
 
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx = barplot(w_2_s, ylab = "%", col = col[3], las=2, ylim = c_y*range(w_2_s), names.arg = colnames(returns))
-text(x = xx, y = w_2_s, paste(round(w_2_s), "%", sep = ""), pos=3, font = 3)
-box()
+ggplot(data = assets_2, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Comparaison between weights in the three portfolios
 #NB: the higher the target expected return, the higher the weight on the asset class (if expected return positive)
 
+comp_short <- bind_rows(gmvp_assets, assets_1, assets_2 )
+
+ggplot(comp_short, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") + 
+  scale_y_continuous(labels = scales::percent) + theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+
+#with facet_wrap
+library(hrbrthemes)
+ggplot(comp_short, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") +
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + 
+  theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+
+#base plot
+c_y <- 1.3
+col <- c("darkred", "darkblue", "darkgrey")
 cex <- 0.8
 par(mar = c(8,4,4,4) + 0.1, cex.axis = cex, xpd = T)
-xx <- barplot(rbind(w_gmvp, w_1_s, w_2_s), ylab="%", col = col, las = 1, beside = T, 
+xx <- barplot(rbind(w_gmvp, w_1_s, w_2_s), ylab = "%", col = col, las = 1, beside = T, 
               ylim = c_y*range(w_gmvp, w_1_s, w_2_s), names.arg = colnames(returns))
-text(x = xx, y = c(rbind(w_gmvp, w_1_s, w_2_s)), paste(round(c(rbind(w_gmvp, w_1_s, w_2_s))), "%", sep=""), 
+text(x = xx, y = c(rbind(w_gmvp, w_1_s, w_2_s)), paste(round(100*c(rbind(w_gmvp, w_1_s, w_2_s))), "%", sep=""), 
      pos = 3, font = 3)
 legend("bottom", horiz = T, inset = c(0,-0.35), legend = c("GMVP","10% target return","20% target return"), 
        text.col = col, pch=c(15), col = col, bty="n")
@@ -70,72 +81,56 @@ box()
 
 #The Global Minimum Variance Portfolio
 gmvp_no <- portfolio.optim(returns) #GMVP. By default, short selling is banned
-w_gmvp_n <- 100*gmvp_no$pw
+w_gmvp_n <- gmvp_no$pw
+gmvp_assets_n <- data.frame(ptf = "GMVP", stock = colnames(returns), weight = w_gmvp_n)
 
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx <- barplot(w_gmvp_n, ylab="%", col="indianred", las = 1, ylim = c_y*range(w_gmvp_n), names.arg = colnames(returns))
-text(x = xx, y = w_gmvp_n, paste(round(w_gmvp_n), "%", sep=""), pos = 3, font = 3)
-box()
+ggplot(data = gmvp_assets_n, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #A portfolio with an expected return of 20%
 target_1_no <- portfolio.optim(returns, pm = 0.20/252)
-w_1_n <- 100*target_1_no$pw
+w_1_n <- target_1_no$pw
+assets_1_n <- data.frame(ptf = "10% return", stock = colnames(returns), weight = w_1_n)
 
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx <- barplot(w_1_n, ylab = "%", col = "#92C5DE", las=1, ylim = c_y*range(w_1_n), names.arg = colnames(returns))
-text(x = xx, y = w_1_n, paste(round(w_1_n), "%", sep=""), pos=3, font = 3)
-box()
+ggplot(data = assets_1_n, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #A portfolio with an expected return of 10%
 target_2_no <- portfolio.optim(returns, pm = 0.10/252)
-w_2_n <- 100*target_2_no$pw
+w_2_n <- target_2_no$pw
+assets_2_n <- data.frame(ptf = "20% return", stock = colnames(returns), weight = w_2_n)
 
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx <- barplot(w_2_n, ylab="%", col="green", las = 1, ylim = c_y*range(w_2_n), names.arg = colnames(returns))
-text(x = xx, y = w_2_n, paste(round(w_2_n), "%", sep=""), pos = 3, font = 3)
-box()
+ggplot(data = assets_2_n, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Comparison of weights between the three portfolios
+comp_no_short <- bind_rows(gmvp_assets_n, assets_1_n, assets_2_n )
 
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx <- barplot(rbind(w_1_n,w_2_n,w_gmvp_n), ylab="%", col = col, las = 1, beside=T, 
-              ylim = c_y*range(w_1_n,w_2_n,w_gmvp_n), names.arg = colnames(returns))
-text(x = xx, y = c(rbind(w_1_n,w_2_n,w_gmvp_n)), paste(round(c(rbind(w_1_n,w_2_n,w_gmvp_n))), "%", sep = ""),
-     pos = 3, font = 3)
-legend("bottom", horiz = T, inset = c(0,-0.35), legend = c("20% target return", "10% target return", "GMVP"), 
-       text.col = col, pch=c(15), col = col, bty="n")
-box()
+ggplot(comp_no_short, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") +
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + 
+  theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #3. comparison short selling- no short selling
 
 #Comparison between GMVPs
+comp_gmvp <- bind_rows(gmvp_assets_n %>% mutate_at("ptf", ~"no short selling"), gmvp_assets %>% mutate_at("ptf", ~"short selling"))
 
-col_2 <- c("darkred","indianred")
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx <- barplot(rbind(w_gmvp, w_gmvp_n), ylab="%", col = col_2, las = 1, beside = T, ylim = c_y*range(w_gmvp, w_gmvp_n), 
-              names.arg = colnames(returns))
-text(x = xx, y = c(rbind(w_gmvp, w_gmvp_n)), gsub("0%", "", paste(round(c(rbind(w_gmvp, w_gmvp_n))), "%", sep = "")), 
-     pos = 3, font = 3)
-legend("bottom", horiz = T, inset = c(0,-0.35), legend = c("short selling","no short selling"), 
-       text.col = col_2, pch=c(15), col = col_2, bty ="n")
-box()
+ggplot(comp_gmvp, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") +
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + 
+  theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Comparison of portfolios with 20% target expected returns : negative yielding assets now have zero weight
+comp_2 <- bind_rows(assets_2_n %>% mutate_at("ptf", ~"no short selling"), assets_2 %>% mutate_at("ptf", ~"short selling"))
 
-col_3 <- c("darkblue","#92C5DE")
-cex <- 0.8
-par(mar = c(8,4,4,4) + 0.1, cex.axis = cex)
-xx <- barplot(rbind(w_1_s, w_1_n), ylab = "%", col = col_3, las = 1, beside = T, ylim = c_y*range(w_1_s, w_1_n),
-              names.arg = colnames(returns))
-text(x = xx, y = c(rbind(w_1_s, w_1_n)), paste(round(c(rbind(w_1_s, w_1_n))), "%", sep=""), pos = 3, font = 3)
-legend("bottom", horiz = T, inset = c(0,-0.35), legend = c("short selling","no short selling"), 
-       text.col = col_3, pch=c(15), col = col_3, bty ="n")
-box()
+ggplot(comp_2, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") +
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
+  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + 
+  theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #######################################   FINDING THE EFFICIENT FRONTIER   #####################################
 
@@ -173,23 +168,23 @@ effi <- ptfs[low:high,]                                                       #c
 
 #Graph minimum variance frontier and efficient frontier
 par(mar = c(7,5,4,3), xpd = T)
-plot(ptfs$vol[c(low,high)], ptfs$return[c(low,high)], las=1, xlab = "standard deviation", ylab = "expected return",
-     ylim = c_y*range(ptfs$return), xlim = c(0.9,1.1)*range(ptfs$vol), col = "lightblue", pch = 19)
+plot(ptfs$vol[ c(low, high) ], ptfs$return[ c(low, high) ], las=1, xlab = "standard deviation", ylab = "expected return",
+     ylim = c_y*range(ptfs$return), xlim = c(0.9, 1.1)*range(ptfs$vol), col = "lightblue", pch = 19)
 lines(effi$vol, effi$return, col = "lightblue", lwd = 2)
 lines(ptfs$vol, ptfs$return, col = "indianred", pch = 20)
-legend("bottom", horiz = T, inset = c(0,-0.35), legend = c("Minimum variance frontier","Efficient frontier"),
-       text.col = c("indianred","lightblue"), col = c("indianred","lightblue"), bty="n", lty=1)
+legend("bottom", horiz = T, inset = c(0, -0.35), legend = c("Minimum variance frontier","Efficient frontier"),
+       text.col = c("indianred","lightblue"), col = c("indianred","lightblue"), bty = "n", lty = 1)
 
 #Graph minimum variance frontier and efficient frontier with ggplot2
-ggplot(ptfs, aes(vol,return)) +  geom_point(aes(color = "Minimum Variance Frontier")) +
+ggplot(ptfs, aes(vol, return)) +  geom_point(aes(color = "Minimum Variance Frontier")) +
   geom_line(data = effi, aes(color = "Efficient frontier"), size = 1) +
-  geom_point(data = ptfs[c(low,high),], aes(vol, return), size = 2) +
-  annotate("text", x = ptfs$vol[c(low,high)], y = ptfs$return[c(low,high)], hjust = -0.1, vjust = 0.2, label = 
-             as.expression(sapply(split(ptfs[c(low,high),], ptfs[c(low,high),]$vol), function(x)
+  geom_point(data = ptfs[c(low, high),], aes(vol, return), size = 2) +
+  annotate("text", x = ptfs$vol[ c(low, high)], y = ptfs$return[ c(low, high)], hjust = -0.1, vjust = 0.2, label = 
+             as.expression(sapply(split(ptfs[ c(low, high),], ptfs[ c(low, high),]$vol), function(x)
                bquote(mu == .(round(x[[3]]*100, 1)) ~ "% ; "~ sigma == .(round(x[[2]]*100, 1)) ~ "%")))) +
   scale_y_continuous(labels = scales::percent) +  scale_x_continuous(labels = scales::percent) +
-  labs(x="standard deviation", y="expected return") + 
-  theme(legend.position = "bottom", legend.title=element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm"))
+  labs(x = "standard deviation", y = "expected return") + 
+  theme(legend.position = "bottom", legend.title = element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #another try with geom_segment
 ggplot() +
@@ -207,12 +202,12 @@ ggplot() +
 
 #2. Efficient frontier when short selling is forbidden
 
-shorts<-F
+shorts <- F
 
-ptfs_no_s<-EF(returns=returns,nports=nports,shorts=shorts,wmax=wmax)     #some returns not attainable with sign constrained optim
-low_no_s<-which.min(ptfs_no_s$vol)
-high_no_s<-which.max(ptfs_no_s$return)
-effi_no_s<-ptfs_no_s[low_no_s:high_no_s,]
+ptfs_no_s <- EF(returns = returns, nports = nports, shorts = shorts, wmax = wmax)     #some returns not attainable with sign constrained optim
+low_no_s <- which.min(ptfs_no_s$vol)
+high_no_s <- which.max(ptfs_no_s$return)
+effi_no_s <- ptfs_no_s[low_no_s:high_no_s,]
 
 #Graph minimum variance frontier and efficient frontier
 par(mar=c(7,5,4,3),xpd=T)
@@ -229,20 +224,20 @@ ggplot(ptfs_no_s, aes(vol,return)) +  geom_point(aes(color = "Minimum Variance F
   geom_point(data = ptfs_no_s[c(low_no_s,high_no_s),], aes(vol, return), size = 2) +
   annotate("text", x = ptfs_no_s$vol[c(low_no_s,high_no_s)], y = ptfs_no_s$return[c(low_no_s,high_no_s)], hjust = -0.1, vjust = 0.2, label = 
              as.expression(sapply(split(ptfs_no_s[c(low_no_s,high_no_s), ], ptfs_no_s$vol[c(low_no_s,high_no_s)]), 
-                                  function(x) bquote(mu == .(round(x[[3]]*100, 1)) ~ "% ; "~ sigma == .(round(x[[2]]*100, 1)) ~ "%")))) +
+          function(x) bquote(mu == .(round(x[[3]]*100, 1)) ~ "% ; "~ sigma == .(round(x[[2]]*100, 1)) ~ "%")))) +
   labs(x = "standard deviation", y = "expected return") + scale_y_continuous(labels = scales::percent) +  
   scale_x_continuous(labels = scales::percent) + 
   theme(legend.position = "bottom", legend.title=element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm")) 
 
 #Weights for each target return
-cum_w<-apply(ptfs_no_s[,grep("w",colnames(ptfs_no_s))],1,cumsum)
+cum_w <- apply( ptfs_no_s[ ,grep("w", colnames(ptfs_no_s))], 1, cumsum)
 
 #Transition map of weights for all target returns
-colvector<-rainbow(6)
-at=seq(1,ncol(cum_w), length.out=7)
+colvector <- rainbow(6)
+at = seq(1, ncol(cum_w), length.out = 7)
 
-cex<-0.8
-par(mar=c(8,4,4,4) + 0.1, cex.axis=cex, xpd=T)
+cex <- 0.8
+par( mar = c(8, 4, 4, 4) + 0.1, cex.axis = cex, xpd = T)
 for (i in 1:nrow(cum_w)){
   plot(1:ncol(cum_w),cum_w[1+nrow(cum_w)-i,], xlab="",ylab="", xlim=c(0,ncol(cum_w)),ylim=range(cum_w),
        las=1,col=colvector[i],pch=20,axes=F)
@@ -257,18 +252,18 @@ box()
 
 
 #Comparaison of frontiers short selling allowed short selling forbidden
-col_no<-c("lightblue","blue","indianred","red")
-par(mar=c(8,5,4,3),xpd=T)
-plot(c(ptfs$vol[low],ptfs_no_s$vol[low_no_s]),c(ptfs$return[low],ptfs_no_s$return[low_no_s]),las=1,
-     xlab="standard deviation", ylab="expected return",
-     ylim=1.2*range(c(ptfs_no_s$return,ptfs$return)), xlim=c(0.8,1.1)*range(c(ptfs$vol,ptfs_no_s$vol)),
-     col=col_no[c(2,4)], pch=19)
-lines(effi$vol,effi$return,col=col_no[2],lwd=2.0)
-lines(ptfs$vol,ptfs$return,col=col_no[1],pch=20)
-lines(effi_no_s$vol,effi_no_s$return,col=col_no[4],lwd=2.0)
-lines(ptfs_no_s$vol,ptfs_no_s$return,col=col_no[3],pch=20)
-legend("bottom", ncol=2, inset = c(0,-0.5), text.col = col_no, col = col_no, lty = 1, bty ="n",
-       legend=c("MV frontier with short","EF with short","MV frontier w/o short","EF w/o short"))
+col_no <- c("lightblue","blue","indianred","red")
+par(mar = c(8, 5, 4, 3), xpd = T)
+plot( c( ptfs$vol[low], ptfs_no_s$vol[low_no_s]), c(ptfs$return[low], ptfs_no_s$return[low_no_s]), las = 1,
+     xlab = "standard deviation", ylab = "expected return",
+     ylim = 1.2*range( c(ptfs_no_s$return, ptfs$return)), xlim = c(0.8, 1.1)*range( c(ptfs$vol, ptfs_no_s$vol)),
+     col = col_no[ c(2, 4)], pch = 19)
+lines(effi$vol, effi$return, col = col_no[2], lwd = 2.0)
+lines(ptfs$vol, ptfs$return, col = col_no[1], pch = 20)
+lines(effi_no_s$vol, effi_no_s$return, col = col_no[4], lwd = 2.0)
+lines(ptfs_no_s$vol, ptfs_no_s$return, col = col_no[3], pch = 20)
+legend("bottom", ncol = 2, inset = c(0,-0.5), text.col = col_no, col = col_no, lty = 1, bty = "n",
+       legend=c("MV frontier with short", "EF with short", "MV frontier w/o short", "EF w/o short"))
 
 
 #for every level of expected return, the ptf with the short sales constraint incurs a higher risk
