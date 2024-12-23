@@ -3,10 +3,10 @@ pacman::p_load("data.table","dplyr","ggplot2")
 
 #######################   VARYING THE CORRELATION COEFFICIENT BETWEEN TWO ASSETS    ###############################
 
-m <- c(3,7)*1e-2                                                         #Expected returns on assets A and B
-V <- c(1.44, 6.25)*1e-2                                                  #Variance on assets A and B
-rho <- c(-1, 1, 0, 0.25)                                                 #Various values for correlation btw A and B
-cov <- apply(cbind(V[1],replicate(2,sqrt(prod(V))*rho),V[2]),1,list)     #all covariances matrix
+m <- c(3, 7)*1e-2                                                             #Expected returns on assets A and B
+V <- c(1.44, 6.25)*1e-2                                                       #Variance on assets A and B
+rho <- c(-1, 1, 0, 0.25)                                                      #Various values for correlation btw A and B
+cov <- apply(cbind(V[1], replicate(2, sqrt(prod(V))*rho), V[2]), 1, list)     #all covariances matrix
 
 w <- seq(0, 1, length.out = 300)
 w <- cbind(w, rev(w))                                                    #a range of weights for both assets
@@ -66,7 +66,7 @@ ggplot(curve, aes(stdev, mean)) +
 
 #Adding in the graph the curve between most distant assets
 asset_pair <- paste0(LETTERS[seq_along(mu)], LETTERS[c(tail(seq_along(mu), -1), 1)])
-lab <- paste0(expression(rho~ plain("_") ),"~",  asset_pair, expression(~ plain("=") ), "~", round(assets$correl/100,2))
+lab <- paste0(expression(rho~plain("_") ),"~", asset_pair, expression(~plain("=")), "~", round(assets$correl/100, 2))
 
 ggplot() + geom_point(data = assets, aes(x = stdev, y = mean, fill = as.factor(correl)), size = 3) +
   annotate(geom = "text", x = assets$stdev,  y = assets$mean, label = LETTERS[seq_along(mu)], 
@@ -74,7 +74,8 @@ ggplot() + geom_point(data = assets, aes(x = stdev, y = mean, fill = as.factor(c
   geom_segment(data = curve, aes(x = stdev, xend = dplyr::lead(stdev), y = mean, yend = dplyr::lead(mean)),
                size = 1, color="indianred") +
   geom_segment(data = curve_2, aes(x = stdev, xend = dplyr::lead(stdev), y = mean, yend = dplyr::lead(mean)), size = 1) +
-  scale_fill_manual(values = rep("black", 6), labels = parse(text = sprintf(lab))) +
+  scale_fill_manual(
+    values = rep("black", 6), labels = parse(text = sprintf(lab))) +
   labs(x = "standard deviation (%)", y = "expected return (%)", fill=NULL) +
   xlim(c(0.9,1.1)*range(curve_2$stdev)) + ylim(c(0.9,1.1)*range(curve_2$mean)) +
   theme(legend.position = "bottom", plot.margin = margin(1.2,.5,1.2,.5, "cm"))
