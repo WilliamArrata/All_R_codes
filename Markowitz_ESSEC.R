@@ -2,16 +2,17 @@
 #####################   WILLIAM ARRATA - ESSEC PORTFOLIO MANAGEMENT COURSE WINTER 2023   ################
 
 require("pacman")
-pacman::p_load("tseries","readxl","dplyr", "tidyr", "data.table", "ggplot2")
+pacman::p_load("tseries","readxl","dplyr", "tidyr", "data.table", "ggplot2", "viridis", "stringr")
 
 #####################   DATA DOWNLOAD AND COMPUTATION OF EXPECTED RETURNS AND COVARIANCES   ################
 
 #I load the data
+setwd("Z://1_Service/1.2_Agents_Service/William/Enseignement/Mon cours 2022/mean variance")
 returns <- read_excel("stock_prices.xlsx") %>%  select_if(is.numeric) %>%  mutate_all(~ ( (.) - shift(.))/(.)) %>% 
   na.omit() %>% rename_with(~word(., 1)) %>% as.matrix
-mean <- 252*matrix(colMeans(returns))                             #annualized expected returns
-sig <- 252*cov(returns)                                           #annualized covariances
-
+annu <- 252
+mean <- annu*matrix(colMeans(returns))                             #annualized expected returns
+sig <- annu*cov(returns)                                           #annualized covariances
 
 ###########################   OPTIMAL PORTFOLIOS FOR SOME TARGET EXPECTED RETURNS   #########################
 
@@ -25,29 +26,32 @@ gmvp <- portfolio.optim(returns, shorts = T)         #only risk minimized when n
 w_gmvp <- gmvp$pw
 gmvp_assets <- data.frame(ptf = "GMVP", stock = colnames(returns), weight = w_gmvp)
 
-print(c(w_gmvp, 252*gmvp$pm, sqrt(252)*gmvp$ps))     #weights, annualized expected return and stddev
+print(c(w_gmvp, annu*gmvp$pm, sqrt(annu)*gmvp$ps))     #weights, annualized expected return and stddev
 
 ggplot(data = gmvp_assets, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
   geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+  scale_fill_viridis(discrete = T, option = "E") + scale_y_continuous(labels = scales::percent) + 
+  theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Portfolio with an 20% target expected return
-target_1 <- portfolio.optim(returns, pm = 0.20/252, shorts = T)
+target_1 <- portfolio.optim(returns, pm = 0.20/annu, shorts = T)
 w_1_s <- target_1$pw
 assets_1 <- data.frame(ptf = "20% return", stock = colnames(returns), weight = w_1_s)
 
 ggplot(data = assets_1, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
-  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) + 
+  scale_fill_viridis(discrete = T, option = "E") + scale_y_continuous(labels = scales::percent) + 
+  theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Portfolio with a 10% target expected return
-target_2 <- portfolio.optim(returns, pm = 0.10/252, shorts = T)
+target_2 <- portfolio.optim(returns, pm = 0.10/annu, shorts = T)
 w_2_s <- target_2$pw
 assets_2 <- data.frame(ptf = "10% return", stock = colnames(returns), weight = w_2_s)
 
 ggplot(data = assets_2, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
-  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+  geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) + 
+  scale_fill_viridis(discrete = T, option = "E") + scale_y_continuous(labels = scales::percent) + 
+  theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Comparaison between weights in the three portfolios
 #NB: the higher the target expected return, the higher the weight on the asset class (if expected return positive)
@@ -55,13 +59,14 @@ ggplot(data = assets_2, aes(x = stock, y = weight)) + geom_bar(stat = "identity"
 comp_short <- bind_rows(gmvp_assets, assets_1, assets_2 )
 
 ggplot(comp_short, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") + 
-  scale_y_continuous(labels = scales::percent) + theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+  scale_fill_viridis(discrete = T, option = "E") + scale_y_continuous(labels = scales::percent) + 
+  theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #with facet_wrap
 library(hrbrthemes)
 ggplot(comp_short, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") +
   geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + 
+  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + scale_fill_viridis(discrete = T, option = "E") +
   theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #base plot
@@ -86,32 +91,35 @@ gmvp_assets_n <- data.frame(ptf = "GMVP", stock = colnames(returns), weight = w_
 
 ggplot(data = gmvp_assets_n, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
   geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+  scale_fill_viridis(discrete = T, option = "E") + scale_y_continuous(labels = scales::percent) +
+  theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #A portfolio with an expected return of 20%
-target_1_no <- portfolio.optim(returns, pm = 0.20/252)
+target_1_no <- portfolio.optim(returns, pm = 0.20/annu)
 w_1_n <- target_1_no$pw
 assets_1_n <- data.frame(ptf = "10% return", stock = colnames(returns), weight = w_1_n)
 
 ggplot(data = assets_1_n, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
   geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+  scale_fill_viridis(discrete = T, option = "E") + scale_y_continuous(labels = scales::percent) + 
+  theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #A portfolio with an expected return of 10%
-target_2_no <- portfolio.optim(returns, pm = 0.10/252)
+target_2_no <- portfolio.optim(returns, pm = 0.10/annu)
 w_2_n <- target_2_no$pw
 assets_2_n <- data.frame(ptf = "20% return", stock = colnames(returns), weight = w_2_n)
 
 ggplot(data = assets_2_n, aes(x = stock, y = weight)) + geom_bar(stat = "identity", aes(fill = stock)) + 
   geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  scale_y_continuous(labels = scales::percent) + theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+  scale_fill_viridis(discrete = T, option = "E") + scale_y_continuous(labels = scales::percent) + 
+  theme(legend.position = "none",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Comparison of weights between the three portfolios
 comp_no_short <- bind_rows(gmvp_assets_n, assets_1_n, assets_2_n )
 
 ggplot(comp_no_short, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") +
   geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + 
+  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + scale_fill_viridis(discrete = T, option = "E") +
   theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #3. comparison short selling- no short selling
@@ -121,7 +129,7 @@ comp_gmvp <- bind_rows(gmvp_assets_n %>% mutate_at("ptf", ~"no short selling"), 
 
 ggplot(comp_gmvp, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") +
   geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
-  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + 
+  facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + scale_fill_viridis(discrete = T, option = "E") +
   theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #Comparison of portfolios with 20% target expected returns : negative yielding assets now have zero weight
@@ -130,7 +138,7 @@ comp_2 <- bind_rows(assets_2_n %>% mutate_at("ptf", ~"no short selling"), assets
 ggplot(comp_2, aes(fill = ptf, y = weight, x = stock)) + geom_bar(position = "dodge", stat = "identity") +
   geom_text(aes(label = paste( round(weight * 100), "%"), vjust = ifelse(weight >= 0, -0.7, 1.2))) +
   facet_wrap(~ptf) +  scale_y_continuous(labels = scales::percent) + theme_ipsum() + 
-  theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
+  scale_fill_viridis(discrete = T, option = "E") + theme(legend.position = "bottom",  plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #######################################   FINDING THE EFFICIENT FRONTIER   #####################################
 
@@ -143,10 +151,10 @@ EF = function (returns, nports, shorts, wmax){
   output <- list()
   for (i in seq_along(target)){
     sol <- NULL
-    try(sol <- portfolio.optim(returns, pm = target[i]/252, reshigh = reshigh, reslow = reslow, shorts=shorts), 
+    try(sol <- portfolio.optim(returns, pm = target[i]/annu, reshigh = reshigh, reslow = reslow, shorts=shorts), 
         silent = T)
     if(!is.null(sol)){
-      output[[i]] <- c(i, sqrt(252)*sol$ps, 252*sol$pm, sol$pw)
+      output[[i]] <- c(i, sqrt(annu)*sol$ps, annu*sol$pm, sol$pw)
       names(output[[i]]) <- c("i", "vol", "return", paste0("w", 1:length(mean)))}
   }
   output <- as.data.frame(do.call(rbind, output))
