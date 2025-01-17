@@ -9,9 +9,13 @@ pacman::p_load("tseries","readxl","dplyr", "tidyr", "data.table", "ggplot2")
 #I load the data
 return <- as.matrix(read_excel("stock_prices.xlsx") %>%  select_if(is.numeric) %>%  mutate_all(~ ( (.) - shift(.))/(.)) %>% 
                        na.omit() %>% rename_with(~gsub(" Equity","", (.)) ))      #daily historical returns
-mean<-252*matrix(colMeans(return))                                                #annualized expected returns
-sig<-252*cov(return)                                                              #annualized covariances
+annu <- 252
+mean <- annu*matrix(colMeans(return))                                                #annualized expected returns
+sig <- annu*cov(return)                                                              #annualized covariances
+sqrt(diag(sig))                                                                      #annualized standard deviations
 
+library(matrixcalc)
+is.singular.matrix(sig)              #is the covariances matrix invertible?
 
 ################################# SIGN CONSTRAINED EFFICIENT FRONTIER   #####################################
 
@@ -24,9 +28,9 @@ EF = function (returns, nports, shorts, wmax){
   output<-list()
   for (i in seq_along(target)){
     sol<-NULL
-    try(sol<-portfolio.optim(returns,pm=target[i]/252,reshigh=reshigh,reslow=reslow, shorts=shorts), silent=T)
+    try(sol<-portfolio.optim(returns,pm=target[i]/annu,reshigh=reshigh,reslow=reslow, shorts=shorts), silent=T)
     if(!is.null(sol)){
-      output[[i]]<-c(i,sqrt(252)*sol$ps,252*sol$pm,sol$pw)
+      output[[i]]<-c(i,sqrt(annu)*sol$ps,annu*sol$pm,  sol$pw)
       names(output[[i]])<-c("i","vol","return",paste0("w",1:length(mean)))}
   }
   output<-as.data.frame(do.call(rbind,output))
