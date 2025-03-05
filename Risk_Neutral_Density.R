@@ -1,35 +1,37 @@
 require("pacman")
-pacman::p_load("stringr", "Hmisc", "stats", "readxl", "data.table", "zoo", "dplyr", "tidyr", "janitor", "ggplot2")
+pacman::p_load("stringr", "Hmisc", "stats", "readxl", "data.table", "zoo", "dplyr", "tidyr", 
+               "janitor", "ggplot2", "lubridate")
 
 ##########################################   DOWNLOAD DATA    ##########################################
 
 #1. Options prices
 options <- read_excel("inputs/ERA_options_31_mai_2023.xlsx")  %>% row_to_names(row_number = 1) %>% 
   clean_names() %>% select(contains(c("strike", "last"))) %>% mutate_if(is.character, ~replace_na(.,"matu")) %>% 
-  rename_with(~c(outer(c("call_", "put_"), c("strike", "price"), paste0)))
+  rename_with(~c(outer(c("call_", "put_"), c("strike", "price"), paste0))) %>% 
+  mutate(option_matu = ifelse(put_price == "matu", mdy(gsub("\\).*", "", word(call_strike, 3))), NA )) %>% 
+  fill("option_matu", .direction = "down") %>% mutate_at("option_matu", as.Date)
 
 #2. Futures contracts prices and maturities
-charac <- options %>% mutate(mat = row_number()) %>% filter(if_any(everything(), ~ grepl('matu',.))) %>% 
-  mutate(option_matu = word(call_strike, 1, 3), fut_price = as.numeric( word(call_strike, -1))) %>% 
-  mutate(terms = as.numeric(gsub('[^0-9.-]','', word(option_matu, 2)))/365, fut_contract = word(call_strike,-2)) %>%
-  select(-colnames(options)) %>% mutate_at("option_matu", ~as.Date(gsub("\\).*","",word(.,-1)), format = "%m/%d/%y"))
+charac <- options %>% filter(if_any(everything(), ~ grepl('matu',.))) %>% 
+  mutate(fut_price = as.numeric( word(call_strike, -1)), terms = as.numeric(gsub('[^0-9.-]','', word(call_strike, 2)))/365) %>% 
+  mutate(fut_contract = word(call_strike, - 2)) %>% select(c("fut_price", "terms", "fut_contract", "option_matu")) 
 
-#graph option prices for the most remote maturity
-last_mat <- options %>% mutate_if(is.character, as.numeric) %>% slice( (last(charac$mat) + 1) : nrow(options) ) %>% 
-  ggplot() + geom_line(aes(x = call_strike, y = call_price, color = "calls" ) )+
-  geom_line(aes(x = call_strike, y = put_price, color = "puts") ) +
-  labs(title = paste0(last(charac$option_matu)," Euribor 3-month futures options prices at all strikes"), subtitle = "31th May 2023") +
-  labs(y = "option premium (EUR)", x = "option strike (EUR)") + scale_x_continuous(breaks = scales::pretty_breaks(n = 7)) +
-  theme(legend.position = "bottom", legend.title=element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm"))
+#graph option premia by maturity
+ggplot() + geom_line(data = options, aes(x = call_strike, y = call_price, group = option_matu, color = "calls")) +  #group/fill
+  geom_line(data = options, aes(x = call_strike, y = put_price, group = option_matu, color = "puts")) +
+  geom_bar(stat = "identity") + labs(x = "option strike (EUR)", y = "option premium (EUR)") + facet_wrap(~option_matu) + theme_bw() +
+  theme(legend.position = "bottom", legend.title = element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm"))
 
-#3. Riskfree rates at options' maturities (discount prices)
+#3. Riskfree rates at options' maturities (discount rates)
 rates <- read_excel("inputs/EUR_rates.xlsx") %>% mutate_if(is.character, as.numeric)
 
 #get by linear extrapolation a risk free rate at each option maturity
-rates_n <- approx(rates$term, rates$Yield, xout=charac$terms, method = "linear", n = 50, rule = 2, f = 0, 
-                        ties = "ordered", na.rm = FALSE)$y/100
+rates_n <- approx(rates$term, rates$Yield, xout = charac$terms, method = "linear", n = 50, rule = 2, f = 0, 
+                        ties = "ordered", na.rm = F)$y/100
 
-###############################  CALIBRATION OF PARAMETERS  ##########################################
+
+#####################################     INTRODUCTION OF THE FUNCTIONS TO OPTIMIZE ########################################
+
 
 nb_log <- 2    #choose number of lognormal laws in the mixture: 2 or 3
 
@@ -45,8 +47,8 @@ esp <- function(x){ exp(x[1] + (x[2]^2/2))}          #expected value for a logno
 
 #call price when the underlying asset follows a mixture of lognormal laws
 call_mix <- function(x, KC){
-ifelse(length(x) == 7, return(x[5]*call(x[c(1, 3)], KC) + (1 - x[5])*call(x[c(2, 4)], KC) ),
-       return(x[7]*call(x[c(1, 4)], KC) + x[8]*call(x[c(2, 5)], KC) + (1 - sum(x[7:8]))*call(x[c(3, 6)], KC))) }
+  ifelse(length(x) == 7, return(x[5]*call(x[c(1, 3)], KC) + (1 - x[5])*call(x[c(2, 4)], KC) ),
+         return(x[7]*call(x[c(1, 4)], KC) + x[8]*call(x[c(2, 5)], KC) + (1 - sum(x[7:8]))*call(x[c(3, 6)], KC))) }
 
 #expected spot price when the underlying asset follows a mixture of lognormal laws
 esp_mix <- function(x){
@@ -72,15 +74,6 @@ MSE_mix <- function(x){
   return(MSE_mix)
 }
 
-#The probability density function
-
-sub <- function(x, y){ x[3]*dlnorm(y, meanlog = x[1], sdlog = x[2]) }
-PDF <- function(x, y){
-  ifelse(length(x) == 5, return(sub(x[c(1, 3, 5)], y) + sub(c(x[c(2, 4)], 1 - x[5]), y) ),
-         return(sub(x[c(1, 4, 7)], y) + sub(x[c(2, 5, 8)], y) + sub( c(x[c(3, 6)], 1-sum(x[7:8])), y))) }
-
-#Calibration of parameters
-
 #weights on itm and otm options fixed for the moment at 0.5 each thus 1st optim on some param only
 PR <- seq(0.1, 0.49, 0.01)
 
@@ -94,153 +87,154 @@ objective <- function(x){
   ifelse( length(PR) !=2, MSE_mix( c(x[1:4], PR[i], rep(0.5, 2))),
           MSE_mix( c(x[1:6], PR[i, 1], PR[i, 2], rep(0.5, 2)))) }
 
-#the density function
+#The probability density function
 sub <- function(x, y){ x[3]*dlnorm(y, meanlog = x[1], sdlog = x[2]) }
 PDF <- function(x, y){
   ifelse(unique(lengths(params)) == 5,
          return(sub(x[c(1, 3, 5)], y) + sub(c(x[c(2, 4)], 1 - x[5]), y) ),
          return(sub(x[c(1, 4, 7)], y) + sub(x[c(2, 5, 8)], y) + sub( c(x[c(3, 6)], 1 - sum(x[7:8])), y))) }
 
-#Calibration of the 7 parameters using market data
-mat <- c( charac$mat, nrow(options))                         #adding one last term to mat for the loop
+#The cumulative Density Function
+sub_2 <- function(x, y){ x[3]*plnorm(y, meanlog = x[1], sdlog = x[2]) }
+CDF <- function(x, y){
+  ifelse(unique(lengths(params)) == 5,
+         return(sub_2(x[c(1, 3, 5)], y) + sub_2(c(x[c(2, 4)], 1 - x[5]), y) ),
+         return(sub_2(x[c(1, 4, 7)], y) + sub_2(x[c(2, 5, 8)], y) + sub_2( c(x[c(3, 6)], 1 - sum( x[7:8])), y)) ) }
+
+
+###############################  CALIBRATION OF PARAMETERS  ##########################################
+
 params <- CV <- PX <- range_px <- nb_opt <- list()
+x_axis <- c(0.98, 1.02)
 
-for (m in 1:length(charac$terms)){
+for (m in 1:length(charac$option_matu)){
+    
+    #Elements of the option price function which are not random variables
+    T <- charac$terms[m]                                                   #maturity m
+    r <- rates_n[m]                                                        #discount rate for maturity m
+    prices <- options %>% filter(option_matu == charac$option_matu[m]) %>% 
+      mutate_if(is.character, as.numeric) %>% na.omit 
+    C <- prices$call_price                                                 #prices of calls for maturity m
+    P <- prices$put_price                                                  #prices of puts for maturity m
+    KC <- KP <- prices$call_strike                                         #strikes of options for maturity m
+    FWD <- charac$fut_price[m]                                             #future price for maturity m
   
-  #Elements of the option price function which are not random variables
-  T <- charac$terms[m]                                             #maturity m
-  r <- rates_n[m]                                                  #discount rate for maturity m
-  prices <- options %>% select(-put_strike) %>% slice(mat[m]:mat[m+1]) %>% 
-    mutate_if(is.character, as.numeric) %>% na.omit %>% mutate_all(funs(./100))
-  C <- prices$call_price                                           #prices of calls for maturity m
-  P <- prices$put_price                                            #prices of puts for maturity m
-  KC <- KP <- prices$call_strike                                   #strikes of options for maturity m
-  FWD <- charac$fut_price[m]/100                                   #future price for maturity m
+    #1st optimization over 6 parameters to get initialization values for second optim
+    m1 <- m2 <- m3 <- s1 <- s2 <- s3 <- SCE <- NA
+    PARA <- as.matrix(data.frame(m1, m2, s1, s2, pr = PR, w1 = 0.5, w2 = 0.5, SCE))
+    if(nb_log != 2){PARA <- as.matrix(data.frame(m1, m2, m3, s1, s2, s3, pr1 = PR[, 1], pr2 = PR[, 2], 
+                                                 w1 = 0.5, w2 = 0.5, p1_p2 = rowSums(PR), SCE))}
+    start <- rep(c(log(FWD), 0.2), each = nb_log)
+    lower <- rep(c(-10, 1e-6), each = nb_log)
+    upper <- rep(c(10, 0.9), each = nb_log)
+    
+    for (i in 1:length(PR)){
+      sol <- nlminb(start = start, objective = objective, lower = lower, upper = upper, 
+                    control = list(iter.max = 500))
+      PARA[i, grep( paste( c("m", "s"), collapse = "|"), colnames(PARA))] <- sol$par
+      PARA[i, "SCE"] <- sol$objective
+    }
+    PARA <- PARA[ !is.na(PARA[, "m1"]), ]
 
-  #1st optimization over 6 parameters to get initialization values for second optim
-  m1 <- m2 <- m3 <- s1 <- s2 <- s3 <- SCE <- NA
-  PARA <- as.matrix(data.frame(m1, m2, s1, s2, pr = PR, w1 = 0.5, w2 = 0.5, SCE))
-  if(nb_log != 2){PARA <- as.matrix(data.frame(m1, m2, m3, s1, s2, s3, pr1 = PR[, 1], pr2 = PR[, 2], 
-                                               w1 = 0.5, w2 = 0.5, p1_p2 = rowSums(PR), SCE))}
-  start <- rep(c(log(FWD), 0.2), each = nb_log)
-  lower <- rep(c(-10, 1e-6), each = nb_log)
-  upper <- rep(c(10, 0.9), each = nb_log)
-  for (i in 1:length(PR)){
-    sol <- nlminb(start = start, objective = objective, lower = lower, upper = upper, 
-                  control = list(iter.max = 500))
-    PARA[i, grep(paste(c("m", "s"), collapse = "|"), colnames(PARA))] <- sol$par
-    PARA[i, "SCE"] <- sol$objective
-   }
-
-  param <- PARA[which.min(PARA[, "SCE"]), -ncol(PARA)]
-  param[param==0] <- 1e-6
-
-  #2nd optimization over 8 parameters
-  L <- U <- rep(0, length(param))
-  L[sign(param) == -1] <- 2*param[sign(param) == -1]
-  L[sign(param) == 1] <- 1e-2*param[sign(param) == 1]
-  U[sign(param) == -1] <- 1e-2*param[sign(param) == -1]
-  U[sign(param) == 1] <- 2*param[sign(param) == 1]
-  CI <- c(L, -U)
-  UI <- rbind(diag(length(L)), -diag(length(L)))
-  
-  solu <- constrOptim(param, MSE_mix, NULL, ui = UI, ci = CI, mu = 1e-05, control = list(iter.max = 2000), 
-                      method = "Nelder-Mead")
-  CV[[m]] <- solu$convergence
-  
-  #conversion of (a,b) into (mu, sigma)
-  params[[m]] <- c(log(FWD) + (solu$par[1:2] - log(FWD))/T, solu$par[3:4]/sqrt(T), solu$par[5])
-  if(nb_log != 2){params[[m]] <- c(log(FWD) + (solu$par[1:3] - log(FWD))/T, solu$par[4:6]/sqrt(T),
+    if(length(PARA) > 0 ){ 
+      param <- PARA[which.min(PARA[, "SCE"]), -ncol(PARA)]
+      param[param == 0] <- 1e-6
+      
+      #2nd optimization over 8 parameters
+      L <- U <- rep(0, length(param)) 
+      L[sign(param) == -1] <- 2*param[sign(param) == -1]
+      L[sign(param) == 1] <- 1e-2*param[sign(param) == 1]
+      U[sign(param) == -1] <- 1e-2*param[sign(param) == -1]
+      U[sign(param) == 1] <- 2*param[sign(param) == 1]
+      CI <- c(L, -U)
+      UI <- rbind(diag(length(L)), -diag(length(L)))
+      
+      solu <- constrOptim(param, MSE_mix, NULL, ui = UI, ci = CI, mu = 1e-05, control = list(iter.max = 2000), 
+                          method = "Nelder-Mead")
+      CV[[m]] <- solu$convergence
+      
+      #conversion of (a,b) into (mu, sigma)
+      params[[m]] <- c(log(FWD) + (solu$par[1:2] - log(FWD))/T, solu$par[3:4]/sqrt(T), solu$par[5])
+      if(nb_log != 2){params[[m]] <- c(log(FWD) + (solu$par[1:3] - log(FWD))/T, solu$par[4:6]/sqrt(T),
                                        solu$par[7:8])}
-  nb_opt[[m]] <- nrow(prices)                                      #number of options for matu m
-  range_px[[m]] <- range(KC, na.rm = T)                            #the range of strike for matu m
-  PX[[m]] <- Reduce(seq, 1e4*range_px[[m]])*1e-4                   #values of x to comput PDF and CDF
-}
+    }
+    else(params[[m]] <- PX[[m]] <- 0)
+    nb_opt[[m]] <- nrow(prices)                                       #number of options for matu m
+    range_px[[m]] <- range(KC)                                        #the range of strike for matu m
+    PX[[m]] <- Reduce(seq, 1e2*range_px[[m]])*1e-2                   #values of x to comput PDF and CDF
+    
+  }
+
 
 #check that integral of PDF*dPX is worth 1, and if necessary augment the range of PX
 DNR <- mapply(PDF, params, PX)
 integ <- mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR, PX)
 integ_fail <- integ < 0.99
-x_axis <- c(0.98, 1.02)
+print(lapply(PX, range))
+PX_2 <- PX
+range_px_2 <- range_px
+for (z in 1:length(params)){
+  counter <- 0
+  while (counter < 50 & sum(rollmean(PDF(params[[z]], PX_2[[z]]), 2)*diff(PX_2[[z]]), na.rm = T) < 0.99){
+    counter <- 1 + counter
+    range_px_2[[z]] <- x_axis*range_px_2[[z]]
+    PX_2[[z]] <- Reduce(seq, 1e2*range_px_2[[z]])*1e-2
+    print(counter)
+  }   
+}
+rg_1 <- lapply(PX, range)
+rg_2 <- lapply(PX_2, range)
+extension <- mapply("/", rg_2, rg_1)
+keep <- which(extension[2, ] < 5)
+PX_2 <- PX_2[keep]
+params_2 <- params[keep]
+charac_2 <- charac[keep, ]
+DNR_2 <- mapply(PDF, params_2, PX_2)
+bad_fit <- round(mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR_2, PX_2))
+bad_fit <- which(bad_fit > 1 | is.na(bad_fit)) 
 
-for (m in which(integ_fail)){
-  while (sum(rollmean(PDF(params[[m]], PX[[m]]), 2)*diff(PX[[m]]), na.rm = T) < 0.99){
-    range_px[[m]] <- x_axis*range_px[[m]]
-    PX[[m]] <- Reduce(seq, 1e4*range_px[[m]])*1e-4 }          #augmented values of x to comput PDF and CDF
+if(length(bad_fit) > 0){
+  PX_2 <- PX_2[-bad_fit]
+  DNR_2 <- DNR_2[-bad_fit]
+  params_2 <- params_2[-bad_fit]
+  charac_2 <- charac_2[-bad_fit, ]}
+
+NCDF <- mapply(CDF, params_2, PX_2)
+
+#check that now all sum to 1
+for (i in 1:length(options)){
+  print(round(mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR_2, PX_2)))
 }
 
-DNR <- mapply(PDF, params, PX)
-round(mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR, PX))
 
-###############################  GRAPH OF RISK NEUTRAL DENSITIES       ########################################
+######################  SEVERAL GRAPHS AROUND THE DISTRIBUTIONS:PDFs, CDFs, QUANTILES... ################
 
-#removing maturities where fit did not work
-bad_fit <- which(round(mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR, PX)) > 1)
-if(length(bad_fit) > 0){
-  PX <- PX[-bad_fit]
-  DNR <- DNR[-bad_fit]
-  params <- params[-bad_fit]
-  charac <- charac[-bad_fit, ]}
-
-#Graph of risk neutral densities for Euribor futures prices
-co <- rainbow(nrow(charac))
-xlim <- range(PX)
-ylim <- range(DNR)
-series <- mapply(cbind, PX, DNR)
-
-nb_log[unique(lengths(params))!=5] <- 3
-
-cex <- 0.8
-par(mar = c(8, 4, 4, 4) + 0.1, xpd = T, cex.axis = cex)
-plot(NA, pch = 20, xlab = "", ylab = "density", xlim = xlim, ylim = ylim, las = 1,
-     main = paste("RNDs from a mixture of",nb_log,"lognormals"))
-mapply(lines, series, col = co)
-title(sub = "3 mth Euribor future price (EUR)", adj = 1, line = 2)
-legend("bottom", inset = c(-0.05,-0.4), legend = charac$option_matu, ncol = 6, col = co, lty = 1, bty = "n")
-
-#Graph of risk neutral densities of prices with ggplot2
-
-series <- lapply(mapply(cbind, series, charac$option_matu), data.frame)
-df_p <- do.call(rbind, series) %>% rename_with(~c("price", "density", "maturity")) %>%
-  mutate_at("maturity", as.Date)
+#Graph of risk neutral densities of prices
+df_p <- mapply(cbind, price = PX_2, density = DNR_2, maturity = charac_2$option_matu)
+df_p <- do.call(rbind, df_p) %>% data.frame %>% mutate_at("maturity", as.Date)
 
 ggplot() + geom_line(data = df_p, aes(x = price, y = density, group = maturity, color = maturity)) +
   labs(title = "Euribor 3-month prices (%)", subtitle = "Probability density functions") +
   labs(y = "probability density", x = "futures prices (% of par)") + 
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 7)) +
+  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
+
+#Graph of risk neutral densities of yields
+df_y <- df_p %>% mutate_at("price", ~1 - ./100)
+
+ggplot() + geom_line(data = df_y, aes(x = price, y = density, group = maturity, color = maturity)) +
+  labs(title = "Euribor 3-month prices (%)", subtitle = "Probability density functions") +
+  labs(y = "probability density", x = "future rates") + 
   scale_x_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 7)) + 
-  ylim(c(0, min(100, max(df_p$density)))) +
-  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm"))  +
   guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
 
-#Graph in base R of risk neutral densities for Euribor rates
-xlim_r <- 1 - rev(xlim)                          #rates derived from prices
-yields <- sapply(PX, function(x) 1 - rev(x))     #we use rev to display rates in increasing order
-DNR_rev <- sapply(DNR, rev)                      #to be consistent with the reordering of yields
-series_y <- mapply(cbind, yields, DNR_rev)
-
-par(mar = c(8,4,4,4) + 0.1, xpd = T, cex.axis = cex)
-plot(NA, pch = 20, xlab = "", ylab = "density", xlim = xlim_r, ylim = ylim, las = 1,
-     main = paste("RNDs from a mixture of",nb_log,"lognormals"))
-mapply(lines, series_y, col = co)
-title(sub = "3 mth Euribor future rate", adj = 1, line = 2)
-legend("bottom", inset = c(-0.05,-0.45), legend = charac$option_matu, ncol = 6, col = co, lty = 1, bty = "n")
-
-series_y <- lapply(mapply(cbind, yields, DNR_rev, charac$option_matu), data.frame)
-df_y <- do.call(rbind, series_y) %>% rename_with(~c("rate", "density", "maturity")) %>%
-  mutate_at("maturity", as.Date)
-
-ggplot() + geom_point(data = df_y, aes(x = rate, y = density, group = maturity, color = maturity), size = 0.5) +
-  labs(title = "Euribor 3-month rate (%)", subtitle = "Probability density functions") +
-  labs(y = "probability density", x = "futures rate") + 
-  scale_x_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 7)) +
-  ylim(c(0, min(100, max(df_y$density)))) +
-  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
-  guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
-
-#Ggplot2 graph of RNDs with RND maturity on x axis
-x0 <- sapply(DNR_rev, function(x) ceiling(max(x)))  #the max of probability density value per RND
+#Graph of RNDs with RND maturity on x axis
+yields <- sapply(PX_2, function(x) 1 - x/100)
+x0 <- sapply(DNR_2, function(x) ceiling(max(x)))  #the max of probability density value per RND
 x0 <- c(0, cumsum(x0))                              #new xaxis : cumulative max probability densities
-y0 <- c(0, charac$terms)                            #RND's terms
+y0 <- c(0, charac_2$terms)                            #RND's terms
 scale <- exp(diff(log(x0[-1])))/exp(diff(log(y0[-1])))   #ratio of consecutive growth rates
 
 #a transformation of x0 which makes them proportional to options' terms
@@ -250,121 +244,80 @@ print(exp(diff(log(z0[-1])))/exp(diff(log(y0[-1]))))      #check that DNR max va
 print(cumsum(diff(z0))/cumsum(diff(y0)))
 
 #The value of each RND following the first are shifted by a constant to allow for a representation proportional to terms
-path <- mapply(function(x, y, z) cbind(density = x + y, yield = z),  DNR_rev,  cumsum(diff(z0)), yields)
+path <- mapply(function(x, y, z) cbind(density = x + y, yield = z),  DNR_2,  cumsum(diff(z0)), yields)
 path <- mapply(rbind, path, 0)
-path <- mapply(cbind, path, charac$terms)
+path <- mapply(cbind, path, charac_2$terms)
 path <- lapply(lapply(path, data.frame), setNames, nm =c("density", "yield", "maturity"))
 path <- do.call(rbind, path)
 
 yield_min <- max(sapply(yields, function(x) min(x)))
 yield_max <- min(sapply(yields, function(x) max(x)))
 
-ggplot() +
-  geom_path(data = path, aes(x = density, y = yield, colour = maturity)) +
+ggplot() +  geom_path(data = path, aes(x = density, y = yield, colour = maturity)) +
   labs(x = "options' maturity (years)", y = 'Euribor 3 month values', title = "3-month Euribor RNDs") +
   scale_x_continuous(labels = function(x) round(x/(max(z0)/max(y0)), 2) , 
                      breaks = scales::pretty_breaks(n = 6), limits = c(0, 1.1*round(max(z0)))) +
   scale_y_continuous(labels = scales::percent, limits = c(yield_min/10, yield_max) )  +
   theme(legend.position = "none", plot.margin = margin(.8,.5,.8,.5, "cm"))
 
-#Cumulative Density Function for any maturity for a sum of 2 or 3 lognormals
-sub_2 <- function(x, y){ x[3]*plnorm(y, meanlog = x[1], sdlog = x[2]) }
-
-CDF <- function(x, y){
-  ifelse(unique(lengths(params))==5,
-         return(sub_2(x[c(1, 3, 5)], y) + sub_2(c(x[c(2, 4)], 1-x[5]), y) ),
-         return(sub_2(x[c(1, 4, 7)], y) + sub_2(x[c(2, 5, 8)], y) + sub_2( c(x[c(3, 6)], 1-sum(x[7:8])), y)) ) }
 
 #Graph of cumulative density functions for contract pricers and rates
-NCDF <- mapply(CDF, params, PX)
-NCDF_rev <- sapply(NCDF, rev)
-series_CDF <- mapply(cbind, PX, NCDF)
-series_CDF_rev <- mapply(cbind, yields, NCDF_rev)
+ncdf_p <- mapply(cbind, price = PX_2, cdf = NCDF, maturity = charac_2$option_matu)
+ncdf_p <- do.call(rbind, ncdf_p) %>% data.frame %>% mutate_at("maturity", as.Date)
 
-
-par(mar = c(8,6,4,4) + 0.1, xpd = T, cex.axis = cex)
-plot(NA, pch = 20, xlab = "", ylab = "cumulative probability", las = 1, xlim = xlim, ylim = 0:1, 
-     main = paste("RNDs from a mixture of",nb_log,"lognormals"))
-mapply(lines, series_CDF, col = co)
-title(sub = "3 mth Euribor future contract (% of par)", adj = 1, line = 2)
-legend("bottom", inset = c(-0.05,-0.4), legend = format(as.yearmon(charac$option_matu), "%b %y"),
-       ncol = 5, col = co, lty = 1, bty = "n")
-
-ncdf_p <- do.call(rbind, mapply(cbind, series_CDF, charac$option_matu)) %>% data.frame %>% 
-  rename_with(~c("price", "CDF", "maturity")) %>% mutate_at("maturity", as.Date)
-
-ggplot() + geom_point(data = ncdf_p, aes(x = price, y = CDF, group = maturity, color = maturity), size = 0.5) +
+ggplot() + geom_point(data = ncdf_p, aes(x = price, y = cdf, group = maturity, color = maturity), size = 0.5) +
   labs(title = "Euribor 3-month future contract (% of par)", subtitle = "Cumulative Density Function") +
-  labs(y = "cumulative density", x = "futures contract price") + 
-  scale_x_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 7)) +
+  labs(y = "cumulative density", x = "futures contract price (% of par)") + 
+  scale_x_continuous(breaks = scales::pretty_breaks(n = 7)) +
   theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
   guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
 
-par(mar = c(8,6,4,4) + 0.1, xpd = T, cex.axis = cex)
-plot(NA, pch = 20, xlab = "", ylab = "cumulative probability", las = 1, xlim = xlim_r, ylim = 0:1, 
-     main = paste("RNDs from a mixture of", nb_log, "lognormals"))
-mapply(lines, series_CDF_rev, col = co)
-title(sub = "3 mth Euribor rate (%)", adj = 1, line = 2)
-legend("bottom", inset = c(-0.05,-0.5), legend = format(as.yearmon(charac$option_matu), "%b %y"),
-       ncol = 5, col = co, lty = 1, bty = "n")
-
 #mean, standard deviation, skewness and kurtosis for the distribution at each options' maturity
-E_y <- 1 - mapply(function(x, y) sum(rollmean(x*y, 2)*diff(x)), PX, DNR)
+E_y <- 100 - mapply(function(x, y) sum(rollmean(x*y, 2)*diff(x)), PX_2, DNR_2)
 
 moments <- function(x){
-  return(mapply(function(x, y, z, t) sum(rollmean( ( (1 - t - y)^x )*z, 2)*diff(t)), x, E_y, DNR, PX))}
+  return(mapply(function(x, y, z, t) sum(rollmean( ( (100 - t - y)^x )*z, 2)*diff(t)), x, E_y, DNR_2, PX_2))}
 
 SD_y <- sqrt(moments(2))
 SK_y <- moments(3)/SD_y^3
 KU_y <- moments(4)/SD_y^4
 
-charac <- charac %>% select(-c(mat, fut_contract)) %>% mutate(fut_rate = 100 - fut_price) %>%
-  bind_cols(t(100*(1-sapply(range_px, rev)/rev(x_axis))), nb_opt = unlist(nb_opt), 100*E_y, 100*SD_y, SK_y, KU_y) %>%
+charac_2 <- charac_2 %>% select(-c(fut_contract)) %>% mutate(fut_rate = 100 - fut_price) %>%
+  bind_cols(t((100 - sapply(range_px, rev)/rev(x_axis))), nb_opt = unlist(nb_opt), E_y, SD_y, SK_y, KU_y) %>%
   rename_at(c(5,6,8:11), ~c("min_strike (%)", "max_strike (%)", "mean (%)", "stddev (%)", "skewness", "kurtosis"))
 
 #quantiles of order 0.1%
 nb_q <- 1000
 thres <- seq(nb_q)/nb_q
 quantiles <- list()
-for (i in 1:length(params)){
+for (i in 1:length(params_2)){
   quantiles[[i]] <- list()
   for (j in 1:length(thres)){
-    quantiles[[i]][[j]] <- 1 - mean(PX[[i]][c(min(which(NCDF[[i]] > thres[j] - 1e-5)),
+    quantiles[[i]][[j]] <- 100 - mean(PX_2[[i]][c(min(which(NCDF[[i]] > thres[j] - 1e-5)),
                                             max(which(NCDF[[i]] < thres[j] + 1e-5)))]) }
-  quantiles[[i]] <- unlist(quantiles[[i]])
+  quantiles[[i]] <- t(data.frame(c(charac_2$terms[i], unlist(quantiles[[i]])))) %>% data.frame %>% 
+    rename_with(~c("term", paste0("q", nb_q*thres)))
 }
 
-eur_spot <- 0.0347
+#Graph of all quantiles
+quantiles_1 <- lapply(quantiles, pivot_longer, cols =! "term", names_to = "quantile", values_to = 'value')
+quantiles_1 <- do.call(rbind, quantiles_1)
 
-mean_r <- data.frame(term = c(0, charac$terms), mean = c(eur_spot, E_y))
+ggplot(quantiles_1, aes(term, value, color = quantile)) +  geom_line() +
+  scale_y_continuous(labels = scales::percent) +
+  theme(legend.position= "bottom", legend.title=element_blank(), 
+        plot.margin = margin(1.2,.5,1.2,.5, "cm")) +
+  labs(x = "term", y = "Euribor rate (%)", color = c("q500" = "deepskyblue")) +
+  scale_color_manual(values = c("q500" = "deepskyblue"))
 
-#graph of quantiles through time with shaded areas
-quantiles_2 <- bind_cols(c(0, charac$terms), rbind(eur_spot, do.call(rbind, quantiles))) %>%
-  rename_with(~c("term", paste0("q", nb_q*thres)))
+#Graph of selected quantiles
+quantiles_2 <- do.call(rbind, quantiles)
 
 ggplot(quantiles_2, aes(x = term)) +
-  geom_ribbon(aes(ymin = q1, ymax = q99, fill = "min-max")) +
-  geom_ribbon(aes(ymin = q1, ymax = q95, fill = "1st decile - 9th décile")) +
-  geom_ribbon(aes(ymin = q1, ymax = q75, fill = "1st quartile - 3rd quartile")) +
-  geom_ribbon(aes(ymin = q1, ymax = q25), fill = "mistyrose1") +
-  geom_ribbon(aes(ymin = q1, ymax = q5), fill = "lightblue") +
-  geom_line(aes(y = q50, color = "median"), size = 0.6) +
-  geom_line(aes(y = mean_r$mean, color = "mean"), size = 0.6) +
-  scale_x_continuous( breaks = scales::pretty_breaks(n=5)) + theme_light() +
-  labs(x = "term (years)", y = "Euribor rate (%)") + scale_y_continuous(labels = scales::percent) +
-  theme(legend.position= "bottom", legend.title=element_blank(), 
-        legend.box = "vertical", plot.margin = margin(.5, .5, 1.2, .5, "cm")) +
-  scale_fill_manual(values = c("mistyrose1", "plum3", "lightblue")) +
-  scale_color_manual(values = c("darkred", "darkgreen"))
-
-
-#graph of quantiles through time unshaded
-ggplot(left_join(quantiles_2, mean_r), aes(x = term)) +
   geom_line(aes(y = q1)) +
   geom_line(aes(y = q5)) +
   geom_line(aes(y = q25)) +
   geom_line(aes(y = q50, color = "median")) +
-  geom_line(aes(y = mean, color = "mean")) +
   geom_line(aes(y = q75)) +
   geom_line(aes(y = q95)) +
   geom_line(aes(y = q99)) +
@@ -373,21 +326,22 @@ ggplot(left_join(quantiles_2, mean_r), aes(x = term)) +
   scale_y_continuous(labels = scales::percent) +
   theme(legend.position= "bottom", legend.title=element_blank(), plot.margin = margin(1.2,.5,1.2,.5, "cm"))
 
-#graph of quantiles through time unshaded #2
-quantiles_3 <- bind_cols(rep(c(0, charac$terms), c(unique(lengths(quantiles)), lengths(quantiles)) ),
-                         c(rep(eur_spot, unique(lengths(quantiles))), unlist(quantiles)),
-                         rep(rev(paste0("q", nb_q*thres)), 1 + length(quantiles))) %>% 
-  rename_all(~c("term", "value", "quantile"))
-
-
-ggplot(quantiles_3, aes(term, value, color = quantile)) +  geom_line() +
-  geom_line(data = mean_r, aes(term, mean), color = "coral1")+
-  scale_y_continuous(labels = scales::percent) +
+#Graph of specific quantiles with shaded areas
+ggplot(quantiles_2, aes(x = term)) +
+  geom_ribbon(aes(ymin = q1, ymax = q999, fill = "min-max")) +
+  geom_ribbon(aes(ymin = q1, ymax = q950, fill = "1st decile - 9th décile")) +
+  geom_ribbon(aes(ymin = q1, ymax = q750, fill = "1st quartile - 3rd quartile")) +
+  geom_ribbon(aes(ymin = q1, ymax = q250), fill = "mistyrose1") +
+  geom_ribbon(aes(ymin = q1, ymax = q50), fill = "lightblue") +
+  geom_line(aes(y = q50, color = "median"), size = 0.6) +
+  scale_x_continuous( breaks = scales::pretty_breaks(n = 5)) + theme_light() +
+  labs(x = "term (years)", y = "Euribor rate (%)") + scale_y_continuous(labels = scales::percent) +
   theme(legend.position= "bottom", legend.title=element_blank(), 
-        plot.margin = margin(1.2,.5,1.2,.5, "cm")) +
-  labs(x = "term", y = "Euribor rate (%)", color = c("q50" = "deepskyblue")) +
-  scale_color_manual(values = c("q50" = "deepskyblue"))
-  
+        legend.box = "vertical", plot.margin = margin(.5, .5, 1.2, .5, "cm")) +
+  scale_fill_manual(values = c("mistyrose1", "plum3", "lightblue")) +
+  scale_color_manual(values = c("darkred", "darkgreen"))
+
+
 #graph of quantile of order q for d^th maturity
 q <- 90
 d <- 6
