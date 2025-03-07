@@ -1,6 +1,6 @@
 require("pacman")
-pacman::p_load("stringr", "Hmisc", "stats", "readxl", "data.table", "zoo", "dplyr", "tidyr", 
-               "janitor", "ggplot2", "lubridate")
+pacman::p_load("stringr", "Hmisc", "stats", "readxl", "data.table", "zoo", "dplyr", "tidyr", "janitor",
+               "ggplot2", "lubridate")
 
 ##########################################   DOWNLOAD DATA    ##########################################
 
@@ -16,13 +16,22 @@ charac <- options %>% filter(if_any(everything(), ~ grepl('matu',.))) %>%
   mutate(fut_price = as.numeric( word(call_strike, -1)), terms = as.numeric(gsub('[^0-9.-]','', word(call_strike, 2)))/365) %>% 
   mutate(fut_contract = word(call_strike, - 2)) %>% select(c("fut_price", "terms", "fut_contract", "option_matu")) 
 
-#graph option premia by maturity
-ggplot() + geom_line(data = options, aes(x = call_strike, y = call_price, group = option_matu, color = "calls")) +  #group/fill
+options <- options %>% group_by(option_matu) %>% slice(-1) %>% ungroup() %>% mutate_at(-ncol(.), as.numeric) 
+
+#option prices for all maturities on one plot
+ggplot() +  geom_line(data = options, aes(x = call_strike, y = call_price, group = option_matu, color = option_matu)) +
+  geom_line(data = options, aes(x = call_strike, y = put_price, group = option_matu, color = option_matu)) + 
+  labs(x = "option strike (EUR)", y = "option premium (EUR)") +
+  theme(legend.position = "bottom", legend.title = element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
+
+#options prices, one plot per maturity
+ggplot() +  geom_line(data = options, aes(x = call_strike, y = call_price, group = option_matu, color = "calls")) + 
   geom_line(data = options, aes(x = call_strike, y = put_price, group = option_matu, color = "puts")) +
   geom_bar(stat = "identity") + labs(x = "option strike (EUR)", y = "option premium (EUR)") + facet_wrap(~option_matu) + theme_bw() +
   theme(legend.position = "bottom", legend.title = element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm"))
 
-#3. Riskfree rates at options' maturities (discount rates)
+#3. Riskfree rates at options' maturities (discount prices)
 rates <- read_excel("inputs/EUR_rates.xlsx") %>% mutate_if(is.character, as.numeric)
 
 #get by linear extrapolation a risk free rate at each option maturity
@@ -104,22 +113,22 @@ CDF <- function(x, y){
 
 ###############################  CALIBRATION OF PARAMETERS  ##########################################
 
+#Calibration of the 7 parameters using market data
 params <- CV <- PX <- range_px <- nb_opt <- list()
-x_axis <- c(0.98, 1.02)
+x_axis <- c(0.98, 1.02)   #to increase the range of prices attainable by a density if needed
 
 for (m in 1:length(charac$option_matu)){
     
     #Elements of the option price function which are not random variables
     T <- charac$terms[m]                                                   #maturity m
     r <- rates_n[m]                                                        #discount rate for maturity m
-    prices <- options %>% filter(option_matu == charac$option_matu[m]) %>% 
-      mutate_if(is.character, as.numeric) %>% na.omit 
+    prices <- options %>% filter(option_matu == charac$option_matu[m])     #isolating data for maturity m
     C <- prices$call_price                                                 #prices of calls for maturity m
     P <- prices$put_price                                                  #prices of puts for maturity m
     KC <- KP <- prices$call_strike                                         #strikes of options for maturity m
     FWD <- charac$fut_price[m]                                             #future price for maturity m
   
-    #1st optimization over 6 parameters to get initialization values for second optim
+    #1st optimization excluding weights on itm and otm options, to get initialization values for second optim
     m1 <- m2 <- m3 <- s1 <- s2 <- s3 <- SCE <- NA
     PARA <- as.matrix(data.frame(m1, m2, s1, s2, pr = PR, w1 = 0.5, w2 = 0.5, SCE))
     if(nb_log != 2){PARA <- as.matrix(data.frame(m1, m2, m3, s1, s2, s3, pr1 = PR[, 1], pr2 = PR[, 2], 
@@ -202,9 +211,7 @@ if(length(bad_fit) > 0){
 NCDF <- mapply(CDF, params_2, PX_2)
 
 #check that now all sum to 1
-for (i in 1:length(options)){
-  print(round(mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR_2, PX_2)))
-}
+print(round(mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR_2, PX_2)))
 
 
 ######################  SEVERAL GRAPHS AROUND THE DISTRIBUTIONS:PDFs, CDFs, QUANTILES... ################
@@ -246,12 +253,11 @@ print(cumsum(diff(z0))/cumsum(diff(y0)))
 #The value of each RND following the first are shifted by a constant to allow for a representation proportional to terms
 path <- mapply(function(x, y, z) cbind(density = x + y, yield = z),  DNR_2,  cumsum(diff(z0)), yields)
 path <- mapply(rbind, path, 0)
-path <- mapply(cbind, path, charac_2$terms)
-path <- lapply(lapply(path, data.frame), setNames, nm =c("density", "yield", "maturity"))
-path <- do.call(rbind, path)
+path <- mapply(cbind, path, maturity = charac_2$terms)
+path <- do.call(rbind, path) %>% data.frame
 
-yield_min <- max(sapply(yields, function(x) min(x)))
-yield_max <- min(sapply(yields, function(x) max(x)))
+yield_min <- max(sapply(yields, min))
+yield_max <- min(sapply(yields, max))
 
 ggplot() +  geom_path(data = path, aes(x = density, y = yield, colour = maturity)) +
   labs(x = "options' maturity (years)", y = 'Euribor 3 month values', title = "3-month Euribor RNDs") +
@@ -286,47 +292,31 @@ charac_2 <- charac_2 %>% select(-c(fut_contract)) %>% mutate(fut_rate = 100 - fu
   bind_cols(t((100 - sapply(range_px, rev)/rev(x_axis))), nb_opt = unlist(nb_opt), E_y, SD_y, SK_y, KU_y) %>%
   rename_at(c(5,6,8:11), ~c("min_strike (%)", "max_strike (%)", "mean (%)", "stddev (%)", "skewness", "kurtosis"))
 
-#quantiles of order 0.1%
+#quantiles of order 0.1% for rates
 nb_q <- 1000
 thres <- seq(nb_q)/nb_q
 quantiles <- list()
 for (i in 1:length(params_2)){
   quantiles[[i]] <- list()
   for (j in 1:length(thres)){
-    quantiles[[i]][[j]] <- 100 - mean(PX_2[[i]][c(min(which(NCDF[[i]] > thres[j] - 1e-5)),
+    quantiles[[i]][[j]] <- 1 - 1e-2*mean(PX_2[[i]][c(min(which(NCDF[[i]] > thres[j] - 1e-5)),
                                             max(which(NCDF[[i]] < thres[j] + 1e-5)))]) }
   quantiles[[i]] <- t(data.frame(c(charac_2$terms[i], unlist(quantiles[[i]])))) %>% data.frame %>% 
     rename_with(~c("term", paste0("q", nb_q*thres)))
 }
 
-#Graph of all quantiles
 quantiles_1 <- lapply(quantiles, pivot_longer, cols =! "term", names_to = "quantile", values_to = 'value')
+quantiles_1 <- lapply(quantiles_1, fill, "value", .direction ="downup")
 quantiles_1 <- do.call(rbind, quantiles_1)
 
-ggplot(quantiles_1, aes(term, value, color = quantile)) +  geom_line() +
-  scale_y_continuous(labels = scales::percent) +
-  theme(legend.position= "bottom", legend.title=element_blank(), 
-        plot.margin = margin(1.2,.5,1.2,.5, "cm")) +
-  labs(x = "term", y = "Euribor rate (%)", color = c("q500" = "deepskyblue")) +
-  scale_color_manual(values = c("q500" = "deepskyblue"))
+#Graph of all quantiles
+ggplot() +  geom_line(data = quantiles_1, aes(term, value, color = quantile)) + scale_y_continuous(labels = scales::percent) +
+  theme(legend.position= "none", plot.margin = margin(1.2,.5,1.2,.5, "cm")) +
+  labs(x = "term", y = "Euribor rate (%)", color = c("q500" = "deepskyblue"))
 
-#Graph of selected quantiles
+#graph of specific quantiles with shaded areas
 quantiles_2 <- do.call(rbind, quantiles)
 
-ggplot(quantiles_2, aes(x = term)) +
-  geom_line(aes(y = q1)) +
-  geom_line(aes(y = q5)) +
-  geom_line(aes(y = q25)) +
-  geom_line(aes(y = q50, color = "median")) +
-  geom_line(aes(y = q75)) +
-  geom_line(aes(y = q95)) +
-  geom_line(aes(y = q99)) +
-  labs(x = "term", y = "Euribor rate (%)", color = c("median" = "deepskyblue",  "mean" = "coral1")) +
-  scale_color_manual(values = c("median" = "deepskyblue", "mean" = "coral1")) +
-  scale_y_continuous(labels = scales::percent) +
-  theme(legend.position= "bottom", legend.title=element_blank(), plot.margin = margin(1.2,.5,1.2,.5, "cm"))
-
-#Graph of specific quantiles with shaded areas
 ggplot(quantiles_2, aes(x = term)) +
   geom_ribbon(aes(ymin = q1, ymax = q999, fill = "min-max")) +
   geom_ribbon(aes(ymin = q1, ymax = q950, fill = "1st decile - 9th décile")) +
@@ -342,12 +332,26 @@ ggplot(quantiles_2, aes(x = term)) +
   scale_color_manual(values = c("darkred", "darkgreen"))
 
 
+#graph of quantiles through time unshaded
+ggplot(quantiles_2, aes(x = term)) +
+  geom_line(aes(y = q1)) +
+  geom_line(aes(y = q5)) +
+  geom_line(aes(y = q25)) +
+  geom_line(aes(y = q50, color = "median")) +
+  geom_line(aes(y = q75)) +
+  geom_line(aes(y = q95)) +
+  geom_line(aes(y = q99)) +
+  labs(x = "term", y = "Euribor rate (%)", color = c("median" = "deepskyblue",  "mean" = "coral1")) +
+  scale_color_manual(values = c("median" = "deepskyblue", "mean" = "coral1")) +
+  scale_y_continuous(labels = scales::percent) +
+  theme(legend.position= "bottom", legend.title=element_blank(), plot.margin = margin(1.2,.5,1.2,.5, "cm"))
+
 #graph of quantile of order q for d^th maturity
 q <- 90
 d <- 6
-cutoff <- mean(PX[[d]][c(min(which(NCDF[[d]] > q/100 - 1e-5)),
+cutoff <- mean(PX_2[[d]][c(min(which(NCDF[[d]] > q/100 - 1e-5)),
                          max(which(NCDF[[d]] < q/100 + 1e-5)))])
-dnr_q <- data.frame(x = PX[[d]], y = DNR[[d]]) %>% mutate(area = x > cutoff)
+dnr_q <- data.frame(x = PX_2[[d]], y = DNR_2[[d]]) %>% mutate(area = x > cutoff)
 
 ggplot(data = dnr_q, aes(x = x)) + geom_ribbon(aes(ymin = 0, ymax = y, fill = area)) +
   geom_line(aes(y = y)) +
