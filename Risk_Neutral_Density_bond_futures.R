@@ -114,7 +114,6 @@ CDF <- function(x, y){
 
 #Calibration of the 7 parameters using market data
 params <- CV <- PX <- range_px <- nb_opt <- list()
-x_axis <- c(0.98, 1.02)
 
 for (m in 1:length(charac$option_matu)){
   
@@ -179,6 +178,8 @@ DNR <- mapply(PDF, params, PX)
 integ <- mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR, PX)
 integ_fail <- integ < 0.99
 print(lapply(PX, range))
+
+x_axis <- c(0.98, 1.02)    #to widen the range of realizations to get integral of PDF*dPX equal to 1
 PX_2 <- PX
 range_px_2 <- range_px
 for (z in 1:length(params)){
@@ -213,38 +214,46 @@ NCDF <- mapply(CDF, params_2, PX_2)
 print(round(mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR_2, PX_2)))
 
 
-#######################  CALCULATION OF ACCRUED COUPON OF CTDs AT OPTION MATURITY ###########################
+##############  GETTING DISTRIBUTION OF CtD YIELDS AT OPTION MATU - ANNUAL COUPON PAYMENTS ################
 
-#Loading futures contracts characteristics and merging with options characteristics
+#Loading futures contracts characteristics and calculation of accrued coupon of CtD and residual life at option's maturity
 
-bond_fut <- read_excel("inputs/OATA_fut_characteristics.xlsx", 1) %>%  
-  rename_with(~c("fut_contract", "conv_factor", "ctd_cp", "ctd_matu")) %>% 
-  mutate_at("fut_contract", ~word(., 1)) %>%  filter(fut_contract%in%charac_2$fut_contract) %>% 
-  mutate_at("ctd_matu", as.Date, format = "%d/%m/%Y") %>% left_join(charac_2) %>% 
-  mutate(prev_cp_dt = as.Date(paste0(format(option_matu, "%Y"),"-",format(ctd_matu, "%m-%d")))) %>% 
-  mutate(prev_cp_dt = ifelse(as.numeric(option_matu - prev_cp_dt) < 0, 
-                             as.Date(paste0(as.numeric(format(option_matu, "%Y")) - 1, "-", format(ctd_matu, "%m-%d"))),
-                             prev_cp_dt)) %>% mutate_at("prev_cp_dt", as.Date) %>% 
-  mutate(cc = as.numeric((option_matu - prev_cp_dt )/365), acc = ctd_cp*cc, 
-         PX_liv = fut_price*conv_factor + acc, years = as.numeric(ctd_matu - option_matu)/365 )
+bond_fut <- read_excel("inputs/DUA_fut_characteristics.xlsx", 1) %>% 
+  rename_with(~c("fut_contract", "conv_factor", "ctd_cp", "ctd_matu")) %>% mutate_at("fut_contract", ~word(., 1)) %>%
+  filter(fut_contract%in%charac_2$fut_contract) %>% mutate_at("ctd_matu", ~dmy(.)) %>% left_join(charac_2) %>%
+  mutate(prev_cp_dt = as.Date(paste0(format(option_matu, "%Y"), "-", format(ctd_matu, "%m-%d")))) %>%
+  mutate_at("prev_cp_dt", ~as.Date(ifelse(option_matu < ., . - years(1), .))) %>%
+  mutate(acc = ctd_cp*as.numeric(option_matu - prev_cp_dt )/365, PX_liv = fut_price*conv_factor + acc,
+         term_from_option_matu = as.numeric(ctd_matu - option_matu)/365 )
 
-####################  CONVERSION OF FUTURES PRICES INTO CTD PRICES THEN YIELDS AT MATU #######################
-
-#conversion des prix futures en prix de CtD à matu de l'option
+#Conversion of futures prices into ytm of its CtD at option's matu
 P <- mapply(function(x, y, z) x*y + z, PX_2, bond_fut$conv_factor, bond_fut$acc)
+term <- apply(apply(mapply("-", bond_fut$term_from_option_matu,
+                           as.list(data.frame(sapply(bond_fut$term_from_option_matu, seq, from = 0)))), 2, rev), 2, list)
+N <- 100 + bond_fut$ctd_cp    #final flow (principal + coupon) per CtD
+Cf <- split(rep(bond_fut$ctd_cp, sapply(term, lengths) - 1), rep(seq_along(term), sapply(term, lengths) - 1))  #other flows per CtD
 
-N <- 100 + bond_fut$ctd_cp                                      #le flux payé à maturité par chaque CtD
+###########  GETTING DISTRIBUTION OF CtD YIELDS AT OPTION MATU - SEMI ANNUAL COUPON PAYMENTS ###########
 
-years_c <- trunc(bond_fut$years)                                #le nb d'années pleines de paiement cp/ppal
-full_y_c <- sapply(years_c, seq, from = 0)                      #toutes les années pleines intermédiaires
-if(length(unique(years_c))==1){full_y_c <- as.list(as.data.frame(full_y_c))}
-term <- mapply("+", full_y_c, bond_fut$years - years_c )         #le terme de tous les flux par CtD
-term <- apply(term, 2, list)
+#Loading futures contracts characteristics and calculation of accrued coupon of CtD and residual life at option's maturity
 
-cf <- split(rep(bond_fut$ctd_cp, years_c), 
-            rep(seq_along(years_c), years_c))                    #les coupons (sauf le final) par CtD
+bond_fut <- read_excel("inputs/IKA_fut_characteristics.xlsx", 1) %>%
+  rename_with(~c("fut_contract", "conv_factor", "ctd_cp", "ctd_matu")) %>% mutate_at("fut_contract", ~word(., 1)) %>%
+  filter(fut_contract%in%charac_2$fut_contract) %>% mutate_at("ctd_matu", ~dmy(.)) %>% left_join(charac_2) %>%
+  mutate(prev_cp_dt = as.Date(paste0(format(option_matu, "%Y"), "-", format(ctd_matu, "%m-%d")))) %>%
+  mutate_at("prev_cp_dt",~as.Date(ifelse(option_matu - . < - months(6), . - years(1),
+                                         ifelse(option_matu - . < 0, . - months(6), .)))) %>%
+  mutate(acc = ctd_cp*as.numeric(option_matu - prev_cp_dt )/365, PX_liv = fut_price*conv_factor + acc,
+         term_from_option_matu = as.numeric(ctd_matu - option_matu)/365 )
 
-#le YTM par obligation à partir de son prix, pour tous les prix possibles de chaque distribution
+#Conversion of futures prices into ytm of its CtD at option's matu
+P <- mapply(function(x, y, z) x*y + z, PX_2, bond_fut$conv_factor, bond_fut$acc)
+term <- apply(apply(mapply("-", bond_fut$term_from_option_matu,
+                           as.list(data.frame(sapply(bond_fut$term_from_option_matu, seq, from = 0, by = 0.5)))), 2, rev), 2, list)
+N <- 100 + bond_fut$ctd_cp/2    #final flow (principal + coupon) per CtD
+cf <- split(rep(bond_fut$ctd_cp/2, sapply(term, lengths) - 1), rep(seq_along(term), sapply(term, lengths) - 1))  #other flows per CtD
+
+#From the distribution of bond future prices to the distribution of CtD ytm
 require('tvm')
 
 tri <- list()
