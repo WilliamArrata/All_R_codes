@@ -191,6 +191,7 @@ for (z in 1:length(params)){
     print(counter)
   }   
 }
+
 rg_1 <- lapply(PX, range)
 rg_2 <- lapply(PX_2, range)
 extension <- mapply("/", rg_2, rg_1)
