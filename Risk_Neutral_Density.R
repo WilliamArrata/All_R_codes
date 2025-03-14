@@ -69,16 +69,16 @@ put_mix <- function(x, KP){ call_mix(x, KP) + exp(-r*T)*(KP - FWD)}   #put call 
 #The function to minimize over 7 or 10 parameters
 
 MSE_mix <- function(x){
-  C_INF <- pmax(esp_mix(x) - KC, call_mix(x, KC))
+  C_INF <- pmax(esp_mix(x) - KC, call_mix(x, KC))  #upper and lower bounds for American option prices
   C_SUP <- exp(r*T)*call_mix(x, KC)
   P_INF <- pmax(KP - esp_mix(x), put_mix(x, KP))
   P_SUP <- exp(r*T)*put_mix(x, KP)
-  A <- as.numeric(KC <= esp_mix(x))
-  B <- as.numeric(KP >= esp_mix(x))
+  A <- as.numeric(KC <= esp_mix(x))   #indicator function worth 1 if call option itm, 0 otherwise
+  B <- as.numeric(KP >= esp_mix(x))   # indicator function worth 1 if put option itm, 0 otherwise
   w_call <- A*first(tail(x, 2)) + (1 - A)*last(x)
   w_put <- B*first(tail(x, 2)) + (1 - B)*last(x)
-  CALL <- w_call*C_INF + (1 - w_call)*C_SUP
-  PUT <- w_put*P_INF + (1 - w_put)*P_SUP
+  CALL <- w_call*C_INF + (1 - w_call)*C_SUP      #American call price estimator
+  PUT <- w_put*P_INF + (1 - w_put)*P_SUP         #American put pric estimator
   MSE_mix <- sum((C - CALL)^2, na.rm = T) + sum((P - PUT)^2, na.rm = T) + (FWD - esp_mix(x))^2
   return(MSE_mix)
 }
