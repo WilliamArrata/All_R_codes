@@ -115,7 +115,6 @@ CDF <- function(x, y){
 
 #Calibration of the 7 parameters using market data
 params <- CV <- PX <- range_px <- nb_opt <- list()
-x_axis <- c(0.98, 1.02)   #to increase the range of prices attainable by a density if needed
 
 for (m in 1:length(charac$option_matu)){
     
@@ -180,8 +179,10 @@ DNR <- mapply(PDF, params, PX)
 integ <- mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR, PX)
 integ_fail <- integ < 0.99
 print(lapply(PX, range))
+
 PX_2 <- PX
 range_px_2 <- range_px
+x_axis <- c(0.98, 1.02)    #to widen the range of realizations to get integral of PDF*dPX equal to 1
 for (z in 1:length(params)){
   counter <- 0
   while (counter < 50 & sum(rollmean(PDF(params[[z]], PX_2[[z]]), 2)*diff(PX_2[[z]]), na.rm = T) < 0.99){
