@@ -1,6 +1,6 @@
 require("pacman")
-pacman::p_load("stringr", "Hmisc", "stats", "readxl", "data.table", "zoo", "dplyr", "tidyr",
-               "janitor", "ggplot2", "lubridate")
+pacman::p_load("stringr", "Hmisc", "stats", "readxl", "data.table", "zoo", "dplyr", "tidyr", "janitor", 
+               "ggplot2", "lubridate")
 
 ##########################################   DOWNLOAD DATA    ##########################################
 
@@ -18,7 +18,7 @@ charac <- options %>% filter(if_any(everything(), ~ grepl('matu',.))) %>%
 
 options <- options %>% group_by(option_matu) %>% slice(-1) %>% ungroup() %>% mutate_at(-ncol(.), as.numeric) 
 
-#option prices for all maturities on one plot
+#option prices for all maturities one one plot
 ggplot() +  geom_line(data = options, aes(x = call_strike, y = call_price, group = option_matu, color = option_matu)) +
   geom_line(data = options, aes(x = call_strike, y = put_price, group = option_matu, color = option_matu)) + 
   labs(x = "option strike (EUR)", y = "option premium (EUR)") +
@@ -68,16 +68,16 @@ put_mix <- function(x, KP){ call_mix(x, KP) + exp(-r*T)*(KP - FWD)}   #put call 
 #The function to minimize over 7 or 10 parameters
 
 MSE_mix <- function(x){
-  C_INF <- pmax(esp_mix(x) - KC, call_mix(x, KC))  #upper and lower bounds for American option prices
+  C_INF <- pmax(esp_mix(x) - KC, call_mix(x, KC))
   C_SUP <- exp(r*T)*call_mix(x, KC)
   P_INF <- pmax(KP - esp_mix(x), put_mix(x, KP))
   P_SUP <- exp(r*T)*put_mix(x, KP)
-  A <- as.numeric(KC <= esp_mix(x))   #indicator function worth 1 if call option itm, 0 otherwise
-  B <- as.numeric(KP >= esp_mix(x))   # indicator function worth 1 if put option itm, 0 otherwise
+  A <- as.numeric(KC <= esp_mix(x))
+  B <- as.numeric(KP >= esp_mix(x))
   w_call <- A*first(tail(x, 2)) + (1 - A)*last(x)
   w_put <- B*first(tail(x, 2)) + (1 - B)*last(x)
-  CALL <- w_call*C_INF + (1 - w_call)*C_SUP      #American call price estimator
-  PUT <- w_put*P_INF + (1 - w_put)*P_SUP         #American put pric estimator
+  CALL <- w_call*C_INF + (1 - w_call)*C_SUP
+  PUT <- w_put*P_INF + (1 - w_put)*P_SUP
   MSE_mix <- sum((C - CALL)^2, na.rm = T) + sum((P - PUT)^2, na.rm = T) + (FWD - esp_mix(x))^2
   return(MSE_mix)
 }
@@ -109,8 +109,6 @@ CDF <- function(x, y){
          return(sub_2(x[c(1, 3, 5)], y) + sub_2(c(x[c(2, 4)], 1 - x[5]), y) ),
          return(sub_2(x[c(1, 4, 7)], y) + sub_2(x[c(2, 5, 8)], y) + sub_2( c(x[c(3, 6)], 1 - sum( x[7:8])), y)) ) }
 
-
-###############################  CALIBRATION OF PARAMETERS  ##########################################
 
 #Calibration of the 7 parameters using market data
 params <- CV <- PX <- range_px <- nb_opt <- list()
@@ -219,7 +217,7 @@ print(round(mapply(function(x,y) sum(rollmean(x, 2)*diff(y)), DNR_2, PX_2)))
 
 #Loading futures contracts characteristics and calculation of accrued coupon of CtD and residual life at option's maturity
 
-bond_fut <- read_excel("inputs/DUA_fut_characteristics.xlsx", 1) %>% 
+bond_fut <- read_excel("inputs/OATA_fut_characteristics.xlsx", 1) %>% 
   rename_with(~c("fut_contract", "conv_factor", "ctd_cp", "ctd_matu")) %>% mutate_at("fut_contract", ~word(., 1)) %>%
   filter(fut_contract%in%charac_2$fut_contract) %>% mutate_at("ctd_matu", ~dmy(.)) %>% left_join(charac_2) %>%
   mutate(prev_cp_dt = as.Date(paste0(format(option_matu, "%Y"), "-", format(ctd_matu, "%m-%d")))) %>%
@@ -232,7 +230,7 @@ P <- mapply(function(x, y, z) x*y + z, PX_2, bond_fut$conv_factor, bond_fut$acc)
 term <- apply(apply(mapply("-", bond_fut$term_from_option_matu,
                            as.list(data.frame(sapply(bond_fut$term_from_option_matu, seq, from = 0)))), 2, rev), 2, list)
 N <- 100 + bond_fut$ctd_cp    #final flow (principal + coupon) per CtD
-Cf <- split(rep(bond_fut$ctd_cp, sapply(term, lengths) - 1), rep(seq_along(term), sapply(term, lengths) - 1))  #other flows per CtD
+cf <- split(rep(bond_fut$ctd_cp, sapply(term, lengths) - 1), rep(seq_along(term), sapply(term, lengths) - 1))  #other flows per CtD
 
 ###########  GETTING DISTRIBUTION OF CtD YIELDS AT OPTION MATU - SEMI ANNUAL COUPON PAYMENTS ###########
 
@@ -265,6 +263,7 @@ for (i in 1:nrow(bond_fut)){
                           interval = c(0, 10))}
   tri[[i]] <- unlist(tri[[i]])}
 
+
 #############################  STATISTICS OF THE DISTRIBUTION #############################
 
 #mean of futures prices at each options's maturity
@@ -287,6 +286,24 @@ moments <- function(x){
 SD <- sqrt(moments(2))
 SK <- moments(3)/SD^3
 KU <- moments(4)/SD^4
+
+#a few quantiles
+nb_q <- 1000
+thres <- seq(nb_q)/nb_q
+quantiles <- list()
+for (i in 1:nrow(charac)){
+  quantiles[[i]] <- list()
+  for (j in 1:length(thres)){
+    quantiles[[i]][[j]] <- mean(tri[[i]][c(min(which(NCDF[[i]] > thres[j] - 1e-5)),
+                                           max(which(NCDF[[i]] < thres[j] + 1e-5)))])
+  }
+  quantiles[[i]] <- t(data.frame(c(charac_2$terms[i], unlist(quantiles[[i]])))) %>% data.frame %>% 
+    rename_with(~c("term", paste0("q", nb_q*thres)))
+}
+
+quantiles_1 <- lapply(quantiles, pivot_longer, cols =! "term", names_to = "quantile", values_to = 'value')
+quantiles_1 <- lapply(quantiles_1, fill, "value", .direction ="downup")
+quantiles_1 <- do.call(rbind, quantiles_1)
 
 #all statistics at a glance
 desc_stats <- bond_fut %>% bind_cols(t(sapply(range_px_2, function(x) x/x_axis))) %>%
@@ -312,6 +329,11 @@ ggplot() + geom_line(data = df_p, aes(x = price, y = density, group = maturity, 
   theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
   guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
 
+ggplot() + geom_line(data = df_p, aes(x = price, y = density, group = maturity, color = maturity)) +  #group/fill
+  geom_bar(stat = "identity") + labs(x = "future prices (EUR)", y = "PDF") + facet_wrap(~maturity) + theme_bw() +
+  theme(legend.position = "none", plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  labs(title = "10-year French bond future prices (EUR)", subtitle = "Implied Probability Density Functions (PDF) at all options' maturities")
+
 #Graph of risk neutral densities of irr
 df_y <- df_p %>% mutate(price = unlist(tri))
 
@@ -319,9 +341,14 @@ ggplot() + geom_line(data = df_y, aes(x = price, y = density, group = maturity, 
   labs(title = "OAT future ytm (%)", subtitle = "Probability density functions") +
   labs(y = "probability density", x = "future rates") + 
   scale_x_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 7)) + 
-  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm"))  +
+  theme(legend.position = "none", plot.margin = margin(.8,.5,.8,.5, "cm"))  +
   guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
 
+ggplot() + geom_line(data = df_y, aes(x = price, y = density, group = maturity, color = maturity)) +  #group/fill
+  geom_bar(stat = "identity") + labs(x = "yields", y = "PDF") + facet_wrap(~maturity) + theme_bw() +
+  theme(legend.position = "none", plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  scale_x_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 7)) + 
+  labs(title = "10-year French bond yields (EUR)", subtitle = "Implied Probability Density Functions (PDF) at all options' maturities")
 
 #Graph of cumulative density functions for contract prices
 ncdf_p <- mapply(cbind, price = PX_2, cdf = NCDF, maturity = charac_2$option_matu)
@@ -331,27 +358,14 @@ ggplot() + geom_point(data = ncdf_p, aes(x = price, y = cdf, group = maturity, c
   labs(title = "Euribor 3-month future contract (% of par)", subtitle = "Cumulative Density Function") +
   labs(y = "cumulative density", x = "futures contract price (% of par)") + 
   scale_x_continuous(breaks = scales::pretty_breaks(n = 7)) +
-  theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  theme(legend.position = "none", plot.margin = margin(.8,.5,.8,.5, "cm")) +
   guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5))
 
-
-#a few quantiles
-nb_q <- 1000
-thres <- seq(nb_q)/nb_q
-quantiles <- list()
-for (i in 1:nrow(charac)){
-  quantiles[[i]] <- list()
-  for (j in 1:length(thres)){
-    quantiles[[i]][[j]] <- mean(tri[[i]][c(min(which(NCDF[[i]] > thres[j] - 1e-5)),
-                                           max(which(NCDF[[i]] < thres[j] + 1e-5)))])
-  }
-  quantiles[[i]] <- t(data.frame(c(charac_2$terms[i], unlist(quantiles[[i]])))) %>% data.frame %>% 
-    rename_with(~c("term", paste0("q", nb_q*thres)))
-}
-
-quantiles_1 <- lapply(quantiles, pivot_longer, cols =! "term", names_to = "quantile", values_to = 'value')
-quantiles_1 <- lapply(quantiles_1, fill, "value", .direction ="downup")
-quantiles_1 <- do.call(rbind, quantiles_1)
+ggplot() + geom_line(data = ncdf_p, aes(x = price, y = cdf, group = maturity, color = maturity)) +  #group/fill
+  geom_bar(stat = "identity") + labs(x = "contract price (EUR)", y = "CDF") + facet_wrap(~maturity) + theme_bw() +
+  theme(legend.position = "none", plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  labs(title = "10-year French bond futures prices (EUR)", 
+       subtitle = "Implied Cumulative Density Functions (CDF) at all options' maturities")
 
 #Graph of all quantiles
 ggplot() +  geom_line(data = quantiles_1, aes(term, value, color = quantile)) + scale_y_continuous(labels = scales::percent) +
