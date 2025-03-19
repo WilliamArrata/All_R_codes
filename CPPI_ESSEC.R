@@ -156,6 +156,22 @@ ggplot() + geom_line(data = cppi, aes(x = Date, y = cppi_value, color = scenario
   theme(legend.position = "none", plot.margin = margin(.8,.5,.8,.5, "cm")) 
 
 
+#comparing the distributions of the returns of the risky asset and the cppi portfolio at maturity of the product
+
+final_risky <- risky_asset %>% filter(Date == last(Date)) %>% select(-Date)
+final_cppi <- cppi %>% filter(Date == last(Date)) %>% select(-Date)
+final <- left_join(final_risky, final_cppi) %>% select(-scenario)
+
+colors <- c("cppi" = "mistyrose", "risky_asset" = "plum3")
+
+ggplot(final) +
+  geom_density(aes(x = risky_asset_value,  fill = "risky_asset", color = "risky_asset"), alpha=0.8) + 
+  geom_density(aes(x = cppi_value, fill ="cppi", color = "cppi"),  alpha=0.8) +
+  xlim(10, 100) + ylim(0, 0.15) + 
+  labs(x = "value at maturity", y = "proba density") +
+  theme(legend.position = "bottom", legend.title=element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  scale_color_manual(values = colors)
+
 ###################     SIMULATIONS OF CPPI VALUES WITH DIFFERENT MULTIPLIERS VALUES        #################
 
 
