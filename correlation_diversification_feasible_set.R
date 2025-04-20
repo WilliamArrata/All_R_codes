@@ -35,7 +35,7 @@ legend("bottom", horiz=T, inset = c(0,-0.4), text.col = colv, pch = rep(NA,4), l
        bty="n", legend = parse(text = sprintf("rho[A][B] == %s",rho)))
 
 
-#########################   N-ASSET CASE: FRONTIER BUILT BY PAIRS OF CONSECUTIVE ASETS   ########################
+#############   FRONTIER BUILT BY PAIRS OF CONSECUTIVE ASSETS FOR MORE THAN TWO ASSETS   ###############
 
 mu <- list(c(0.03,0.05), c(0.05,0.065), c(0.065,0.075),             #expected returns on pairs of assets
            c(0.075,0.11), c(0.11,0.15), c(0.03,0.15))
