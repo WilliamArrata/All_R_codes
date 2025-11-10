@@ -63,7 +63,7 @@ resampm <- colMeans(estim, dims = 1)                                #the average
 
 #Distribution of daily returns for 3 random simulations for a given asset
 alea <- sort(sample(n_samp, 3))                                  
-dens_ex <- 1000*data.frame(estim[, 6, alea])/n_samp                   #I pick 3 simulations randomly for asset 6
+dens_ex <- 100*data.frame(estim[, 6, alea])/n_samp                   #I pick 3 simulations randomly for asset 6
 dens <- apply(dens_ex, 2, density)                                   #I represent their return distrib with density
 
 #Graph
