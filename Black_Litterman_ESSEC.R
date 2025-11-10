@@ -2,47 +2,50 @@
 #####################   WILLIAM ARRATA - ESSEC PORTFOLIO MANAGEMENT COURSE WINTER 2023   ################
 
 require("pacman")
-pacman::p_load("tseries","readxl","dplyr","tidyr","data.table")
+pacman::p_load("tseries","readxl","dplyr", "tidyr", "data.table", "ggplot2")
 
 #####################   DATA DOWNLOAD AND COMPUTATION OF EXPECTED RETURNS AND COVARIANCES   ################
 
 #I load the data
 returns <- as.matrix(read_excel("stock_prices.xlsx") %>%  select_if(is.numeric) %>%  mutate_all(~ ( (.) - shift(.))/(.)) %>% 
-                       na.omit() %>% rename_with(~gsub(" Equity","", (.)) ))   #historical daily returns
-mean <- 252*matrix(colMeans(returns))                             #annualized expected returns
-sig <- 252*cov(returns)                                           #annualized covariances
+                       na.omit() %>% rename_with(~gsub(" Equity","", (.)) ))      #daily historical returns
+mean <- 252*matrix(colMeans(returns))                                                #annualized expected returns
+sig <- 252*cov(returns)                                                              #annualized covariances
+
 
 ################################# SIGN CONSTRAINED EFFICIENT FRONTIER   #####################################
 
 EF = function (returns, nports, shorts, wmax){
   max_ret<-max(mean)
-  #max_ret<-(1+as.numeric(shorts)*0.5)*max(mean)     #la cible de renta maximale
-  target<-seq(-max_ret, max_ret, len= nports)       #on définit les cibles de renta via nports et maxret
-  reslow<-rep(-as.numeric(shorts), length(mean))    #vecteur de poids minimum
-  reshigh<-rep(wmax,length(mean))                   #vecteur de poids max
-  output<-list()
+  #max_ret<-(1+as.numeric(shorts)*0.5)*max(mean)      #la cible de renta maximale
+  target <- seq(-max_ret, max_ret, len= nports)       #on définit les cibles de renta via nports et maxret
+  reslow <- rep(-as.numeric(shorts), length(mean))    #vecteur de poids minimum
+  reshigh <- rep(wmax,length(mean))                   #vecteur de poids max
+  output <- list()
   for (i in seq_along(target)){
-    sol<-NULL
-    try(sol<-portfolio.optim(returns,pm=target[i]/252,reshigh=reshigh,reslow=reslow, shorts=shorts), silent=T)
+    sol <- NULL
+    try(sol <- portfolio.optim(returns, pm = target[i]/252, reshigh = reshigh, reslow = reslow, shorts = shorts), silent = T)
     if(!is.null(sol)){
-      output[[i]]<-c(i,sqrt(252)*sol$ps,252*sol$pm,sol$pw)
-      names(output[[i]])<-c("i","vol","return",paste0("w",1:length(mean)))}
+      output[[i]] <- c(i, sqrt(252)*sol$ps, 252*sol$pm, sol$pw)
+      names(output[[i]]) <- c("i", "vol", "return", paste0("w", 1:length(mean)))}
   }
   output<-as.data.frame(do.call(rbind,output))
   rownames(output)<-output$i
   return(output)
 }
 
-nports<-300   #nb of ptf, thus we have 300 target expected returns
+nports <- 300   #nb of ptf, thus we have 300 target expected returns
 
 #Efficient frontier when short selling is forbidden
-shorts<-F
-wmax<-1
+shorts <- F
+wmax <- 1
 
-ptfs_no_s <- EF(returns = as.matrix(return), nports = nports, shorts = shorts, wmax = wmax)
+ptfs_no_s <- EF(returns = returns, nports = nports, shorts = shorts, wmax = wmax)
 low_no_s <- which.min(ptfs_no_s$vol)
 high_no_s <- which.max(ptfs_no_s$return)
 effi_no_s <- ptfs_no_s[low_no_s:high_no_s,]
+
+
 
 #######################################   BLACK LITTERMAN MODEL   #####################################
 
