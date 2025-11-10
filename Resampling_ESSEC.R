@@ -58,9 +58,6 @@ n_tirages <- 250                                                     #length of 
 estim <- replicate(n_samp , mvrnorm(n_tirages, mean/252, sig/252, tol = 1e-06, empirical = F))
 resampm <- colMeans(estim, dims = 1)                                #the average return for each asset in each simu
 
-# 252*rowMeans(resampm)
-# mean
-
 #Distribution of daily returns for 3 random simulations for a given asset
 alea <- sort(sample(n_samp, 3))                                  
 dens_ex <- 100*data.frame(estim[, 6, alea])/n_samp                   #I pick 3 simulations randomly for asset 6
