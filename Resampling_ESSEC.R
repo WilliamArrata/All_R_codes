@@ -52,15 +52,18 @@ effi_no_s <- ptfs_no_s[low_no_s:high_no_s,]
 #Simulating n_samp samples of length n_tirages for the 6 assets
 require(MASS)
 set.seed(33)
-n_samp <- 1000                                                       #number of samples
+n_samp <- 100                                                       #number of samples
 n_tirages <- 250                                                     #length of each sample
 #daily simulated returns for the six stocks in each simu
-estim <- replicate(n_samp , mvrnorm(n_tirages, mean, 252*sig, tol = 1e-06, empirical = F)/252)
+estim <- replicate(n_samp , mvrnorm(n_tirages, mean/252, sig/252, tol = 1e-06, empirical = F))
 resampm <- colMeans(estim, dims = 1)                                #the average return for each asset in each simu
+
+# 252*rowMeans(resampm)
+# mean
 
 #Distribution of daily returns for 3 random simulations for a given asset
 alea <- sort(sample(n_samp, 3))                                  
-dens_ex <- 10000*data.frame(estim[, 6, alea])/n_samp                   #I pick 3 simulations randomly for asset 6
+dens_ex <- 1000*data.frame(estim[, 6, alea])/n_samp                   #I pick 3 simulations randomly for asset 6
 dens <- apply(dens_ex, 2, density)                                   #I represent their return distrib with density
 
 #Graph
@@ -80,6 +83,7 @@ plot(NA, xlim = range(dens_moy$x), ylim = range(dens_moy$y), xlab = "in %", ylab
      col = "darkblue", main = "Distribution of expected returns of Hermès daily stock returns")
 lines(dens_moy)
 
+
 #######################################   RESAMPLED EFFICIENT FRONTIER   #####################################
 
 #I write a new function which has resampled series of returns as input
@@ -87,7 +91,7 @@ EF2 = function (nports, shorts, wmax){
   return(EF( returns = estim[,,i], nports, shorts, wmax))}
 
 #I run the optimization for the 1000 simulated sets of returns
-resampw <- list()
+resampw <- coord <- list()
 for (i in 1:n_samp){
   output <- EF2(nports = nports, shorts = shorts, wmax = wmax)
   if (nrow(output) == 0){                                #weights are all equal to 0 when no solution
@@ -98,6 +102,7 @@ for (i in 1:n_samp){
                          dimnames = list((1:nports)[-output$i], colnames(output))), output)}
   output <- output[order(as.numeric(rownames(output))),]
   resampw[[i]] <- output[ ,grep("w", colnames(output))]
+  coord[[i]] <- output[ , grep(paste(c("vol", "return"), collapse ="|"), colnames(output))]
 }
 
 #I average weights across each target return for all optimizations
@@ -108,15 +113,19 @@ aveweight <- aveweight/replicate(ncol(aveweight), rowSums(aveweight))
 #I apply average weights to initial parameters to get robust efficient frontier
 resamp <- data.frame(vol = diag(sqrt(aveweight%*%sig%*%t(aveweight))), return = aveweight%*%mean)
 
+coord <- do.call(rbind, mapply(cbind, n_samp = c(1:n_samp), coord)) %>% data.frame %>%
+  rename_with(~c("n_samp", "vol", "return"))
+
 #graph of the Markowitz frontier and the average of the resampled efficient frontiers
-col<-c("darkblue","indianred")
-par(mar=c(7, 6, 4, 4),xpd=T)
-plot(100*ptfs_no_s$vol,100*ptfs_no_s$return,col="darkblue", lwd=2,xlab="standard deviation (%)",
-     ylab="expected return (%)",las=1, type="l",pch=20,ylim=100*range(c(resamp$return,ptfs_no_s$return), na.rm = T),
-     xlim=100*range(c(resamp$vol,ptfs_no_s$vol), na.rm = T))
-lines(100*resamp$vol,100*resamp$return,col="indianred", lwd=2)
-legend("bottom", horiz = T,inset = c(0,-0.4),text.col=col,pch=rep(NA,3),lty=rep(1,3),col=col, bty="n",
-       legend= c("Markowitz efficient frontier","resampled efficient frontier"))
+ggplot() +
+  geom_segment(data = coord, aes(x = vol, xend = dplyr::lead(vol), y = return, yend = dplyr::lead(return)), 
+                size = 1) +
+  geom_segment(data = ptfs_no_s, aes(x = vol, xend = dplyr::lead(vol), y = return, yend = dplyr::lead(return)), 
+               size = 2, color="indianred") +
+  geom_segment(data = resamp, aes(x = vol, xend = dplyr::lead(vol), y = return, yend = dplyr::lead(return)), 
+               size = 2, color="skyblue") +
+  labs(x="standard deviation", y="expected return") + theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  scale_y_continuous(labels = scales::percent) +  scale_x_continuous(labels = scales::percent)
 
 #weights by asset across the frontier (transition map)
 cum_ave_w <- apply(aveweight, 1, cumsum)
