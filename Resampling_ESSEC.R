@@ -115,14 +115,15 @@ coord <- do.call(rbind, mapply(cbind, n_samp = c(1:n_samp), coord)) %>% data.fra
 
 #graph of the Markowitz frontier and the average of the resampled efficient frontiers
 ggplot() +
-  geom_segment(data = coord, aes(x = vol, xend = dplyr::lead(vol), y = return, yend = dplyr::lead(return)), 
-                size = 1) +
-  geom_segment(data = ptfs_no_s, aes(x = vol, xend = dplyr::lead(vol), y = return, yend = dplyr::lead(return)), 
-               size = 2, color="indianred") +
-  geom_segment(data = resamp, aes(x = vol, xend = dplyr::lead(vol), y = return, yend = dplyr::lead(return)), 
-               size = 2, color="skyblue") +
-  labs(x="standard deviation", y="expected return") + theme(legend.position = "bottom", plot.margin = margin(.8,.5,.8,.5, "cm")) +
-  scale_y_continuous(labels = scales::percent) +  scale_x_continuous(labels = scales::percent)
+  geom_segment(data = coord, aes(x = vol, xend = dplyr::lead(vol), y = return,
+                                 yend = dplyr::lead(return)), size = 1) +
+  geom_segment(data = ptfs_no_s, aes(x = vol, xend = dplyr::lead(vol), y = return,
+                                     yend = dplyr::lead(return), color = "Markowitz efficient frontier"), size = 2) +
+  geom_segment(data = resamp, aes(x = vol, xend = dplyr::lead(vol), y = return,
+                                  yend = dplyr::lead(return), color = "resampled frontier"), size = 2) +
+  labs(x = "standard deviation", y = "expected return") +
+  scale_y_continuous(labels = scales::percent) +  scale_x_continuous(labels = scales::percent) +
+  theme(legend.position = "bottom", legend.title = element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm"))
 
 #weights by asset across the frontier (transition map)
 cum_ave_w <- apply(aveweight, 1, cumsum)
@@ -135,14 +136,14 @@ colvector <- rainbow(6)
 cex <- 0.8
 par(mar = c(8,4,4,4) + 0.1, xpd = T, cex.axis = cex)
 for (i in 1:nrow(cum_ave_w)){
-  plot(1:ncol(cum_ave_w),cum_ave_w[1+nrow(cum_ave_w)-i,], xlab="",ylab="", ylim=0:1,
-       xlim=c(0,ncol(cum_ave_w)),las=1, col=colvector[i],pch=20, axes=F)
-  polygon(c(1:ncol(cum_ave_w),ncol(cum_ave_w):1), c(rep(0,ncol(cum_ave_w)),rev(cum_ave_w[1+nrow(cum_ave_w)-i,])),
-          col=colvector[i])
-  par(new=T)}
-axis(1, at=at_2, labels=round(100*resamp$return,1)[at_2], cex.axis =cex)
-axis(2, at=at_1, labels=at_1*100,cex.axis=cex)
-mapply(mtext, c("expected return (%)", "weights (%)"), side=c(1,2), line = rep(2.5,2))
-legend("bottom",ncol=3,inset = c(0,-0.5),legend=rev(colnames(returns)),text.col=colvector,col=colvector,
-       pch=c(15), bty="n")
+  plot( 1:ncol(cum_ave_w), cum_ave_w[1 + nrow(cum_ave_w) - i,], xlab = "", ylab = "", ylim = 0:1,
+        xlim = c(0, ncol(cum_ave_w)), las = 1, col = colvector[i], pch = 20, axes = F)
+  polygon( c(1:ncol(cum_ave_w), ncol(cum_ave_w):1), c(rep(0, ncol(cum_ave_w)), rev(cum_ave_w[1 + nrow(cum_ave_w)-i,])),
+           col=colvector[i])
+  par(new = T)}
+axis(1, at = at_2, labels = round(100*resamp$return,1)[at_2], cex.axis = cex)
+axis(2, at = at_1, labels = at_1*100, cex.axis = cex)
+mapply(mtext, c("expected return (%)", "weights (%)"), side = c(1, 2), line = rep(2.5, 2))
+legend("bottom", ncol = 3, inset = c(0, -0.35), legend = rev(colnames(returns)), text.col = colvector,
+       col = colvector, pch = c(15), bty = "n")
 box()
