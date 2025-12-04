@@ -50,21 +50,15 @@ effi_no_s <- ptfs_no_s[low_no_s:high_no_s,]
 
 require(epca)
 
-correl <- cor(returns)
+shrink_cov <- shrinkage(sig, gamma = 2, shrink="soft", epsilon = 1e-11)
 
-shrink_correl <- shrinkage(as.matrix(correl), gamma = 10, shrink="soft", epsilon = 1e-11)
-
-shrink_sig <- sig*shrink_correl/correl
-
-#we draw realizations of returns based on this shrunk covariance matrix.
 #Simulating n_samp samples of length n_tirages for the 6 assets
 require(MASS)
 set.seed(33)
-n_tirages <- nrow(returns)
+n_tirages <- nrow(returns)                                       #length of each sample
 
 #daily simulated returns for the six stocks
-estim <- mvrnorm(n_tirages, mean/252, shrink_sig/252, tol = 1e-06, empirical = F)
-
+estim <- mvrnorm(n_tirages, mean/252, shrink_cov/252, tol = 1e-06, empirical = F)
 
 ###########################   EFFICIENT FRONTIER WITH SHRUNK ESTIMATE   ##############################
 
