@@ -103,8 +103,8 @@ if(nb_log != 2){
 
 #objective function to be minimized
 objective <- function(x){
-  ifelse( length(PR) !=2, MSE_mix( c(x[1:4], PR[i], rep(0.5, 2))),
-          MSE_mix( c(x[1:6], PR[i, 1], PR[i, 2], rep(0.5, 2)))) }
+  ifelse( length(PR) !=2, MSE_mix( c(x[1:4], PR[i])),
+          MSE_mix( c(x[1:6], PR[i, 1], PR[i, 2]))) }
 
 #The probability density function
 sub <- function(x, y){ x[3]*dlnorm(y, meanlog = x[1], sdlog = x[2]) }
