@@ -1,8 +1,7 @@
-
 #####################   WILLIAM ARRATA - ESSEC PORTFOLIO MANAGEMENT COURSE WINTER 2023   ################
 
 require("pacman")
-pacman::p_load("tseries","readxl","dplyr", "tidyr", "data.table", "ggplot2")
+pacman::p_load("tseries","readxl","dplyr", "tidyr", "data.table", "ggplot2", "tibble")
 
 #####################   DATA DOWNLOAD AND COMPUTATION OF EXPECTED RETURNS AND COVARIANCES   ################
 
@@ -48,37 +47,56 @@ effi_no_s <- ptfs_no_s[low_no_s:high_no_s,]
 
 #######################################   RESAMPLING HISTORICAL RETURNS   #####################################
 
-
 #Simulating n_samp samples of length n_tirages for the 6 assets
 require(MASS)
 set.seed(33)
-n_samp <- 100                                                       #number of samples
+n_samp <- 1000                                                       #number of samples
 n_tirages <- 250                                                     #length of each sample
 #daily simulated returns for the six stocks in each simu
 estim <- replicate(n_samp , mvrnorm(n_tirages, mean/252, sig/252, tol = 1e-06, empirical = F))
 resampm <- colMeans(estim, dims = 1)                                #the average return for each asset in each simu
 
-#Distribution of daily returns for 3 random simulations for a given asset
-alea <- sort(sample(n_samp, 3))                                  
-dens_ex <- 100*data.frame(estim[, 6, alea])/n_samp                   #I pick 3 simulations randomly for asset 6
-dens <- apply(dens_ex, 2, density)                                   #I represent their return distrib with density
+#we check convergence of sampling
+# 252*rowMeans(resampm)
+# mean
 
-#Graph
-par(mar=c(7,5,4,3),xpd=T)
+#Distribution of daily returns for 3 random simulations for Hermès Stock
+alea <- sort(sample(n_samp, 3))                                  
+dens_ex <- data.frame(estim[, "RMS FP", alea]) %>% rename_with(~paste0("simu_", alea)) %>% 
+  rownames_to_column("day") %>% pivot_longer(cols =! "day", names_to = "simulation", values_to = "return")
+
+#barchart graph
+ggplot(dens_ex, aes(x = return, color = simulation)) + geom_histogram() + facet_wrap(~simulation) +
+  labs(y = "number of occurrences") +
+  theme(legend.position = "bottom", legend.title = element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5)) + 
+  scale_x_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 4))
+
+#graph density
+dens <- apply(100*data.frame(estim[, "RMS FP", alea]), 2, density)      #I represent their return distrib with density
+
+
+par(mar = c(7, 5, 4, 3), xpd = T)
 plot(NA, xlim = range(sapply(dens, "[", "x")), ylim = range(sapply(dens, "[", "y")), xlab = "in %",
      ylab = "frequency of observation (in %)", main = "A few resampled distributions of Hermès daily stock returns")
 mapply(lines, dens, col = 1:length(dens))
 legend("bottom", horiz = T,inset = c(0, -0.3), text.col = 1:length(dens), pch = c(NA, NA), lty = rep(1, 3),
        col = 1:length(dens), bty = "n",legend = paste("simulation", alea))
 
-#Distribution of mean returns across all simu for a given asset class
-dens_moy <- density( 100*resampm[6, ])
-dens_moy$y <- 100*dens_moy$y/n_samp
+#Distribution of mean returns across all simu for a Hermès
+ggplot(data.frame(resampm["RMS FP", ]) %>% rename_with(~"mean_return") %>% rownames_to_column("day"), 
+       aes(x = mean_return)) + geom_histogram() + labs(y = "number of occurrences") +
+  theme(legend.position = "bottom", legend.title = element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm")) +
+  guides(color = guide_legend(title = "maturity", title.position = "top", title.hjust = 0.5)) + 
+  scale_x_continuous(labels = scales::percent, breaks = scales::pretty_breaks(n = 4))
 
-#Graph
+#Graph density
+dens_moy <- density( 100*resampm["RMS FP", ])
+pdf("Hermes_means_for_all_resampled_distrib.pdf", width = 9, height = 6)
 plot(NA, xlim = range(dens_moy$x), ylim = range(dens_moy$y), xlab = "in %", ylab = "frequency of observation (in %)",
      col = "darkblue", main = "Distribution of expected returns of Hermès daily stock returns")
 lines(dens_moy)
+dev.off()
 
 
 #######################################   RESAMPLED EFFICIENT FRONTIER   #####################################
@@ -93,10 +111,10 @@ for (i in 1:n_samp){
   output <- EF2(nports = nports, shorts = shorts, wmax = wmax)
   if (nrow(output) == 0){                                #weights are all equal to 0 when no solution
     output <- matrix(c(0, rep(NA, 2), rep(0, ncol(returns))), nports, 3 + ncol(returns), byrow = T,
-                   dimnames = list((1:nports), c("i", "vol", "return", paste0("w", 1:ncol(returns)))))}
+                     dimnames = list((1:nports), c("i", "vol", "return", paste0("w", 1:ncol(returns)))))}
   else {
     output <- rbind(matrix( c(0, rep(NA, 2), rep(0, ncol(returns))), nports - nrow(output), ncol(output), byrow = T,
-                         dimnames = list((1:nports)[-output$i], colnames(output))), output)}
+                            dimnames = list((1:nports)[-output$i], colnames(output))), output)}
   output <- output[order(as.numeric(rownames(output))),]
   resampw[[i]] <- output[ ,grep("w", colnames(output))]
   coord[[i]] <- output[ , grep(paste(c("vol", "return"), collapse ="|"), colnames(output))]
@@ -116,11 +134,11 @@ coord <- do.call(rbind, mapply(cbind, n_samp = c(1:n_samp), coord)) %>% data.fra
 #graph of the Markowitz frontier and the average of the resampled efficient frontiers
 ggplot() +
   geom_segment(data = coord, aes(x = vol, xend = dplyr::lead(vol), y = return,
-                                 yend = dplyr::lead(return)), size = 1) +
+                                 yend = dplyr::lead(return), color = "resampled frontiers"), size = 0.5) +
   geom_segment(data = ptfs_no_s, aes(x = vol, xend = dplyr::lead(vol), y = return,
-                                     yend = dplyr::lead(return), color = "Markowitz efficient frontier"), size = 2) +
+                                     yend = dplyr::lead(return), color="Markowitz efficient frontier"), size = 2) +
   geom_segment(data = resamp, aes(x = vol, xend = dplyr::lead(vol), y = return,
-                                  yend = dplyr::lead(return), color = "resampled frontier"), size = 2) +
+                                  yend = dplyr::lead(return), color="resampled efficient frontier"), size = 2) +
   labs(x = "standard deviation", y = "expected return") +
   scale_y_continuous(labels = scales::percent) +  scale_x_continuous(labels = scales::percent) +
   theme(legend.position = "bottom", legend.title = element_blank(), plot.margin = margin(.8,.5,.8,.5, "cm"))
